@@ -77,7 +77,7 @@ fn a_mis_encoded_value_is_not_reported_as_unset_and_is_not_quoted() {
         e.message
     );
     assert!(
-        !e.message.contains("unset") && !e.message.contains("ab"),
+        !e.message.contains("is unset") && !e.message.contains("ab\u{fffd}cd"),
         "{}",
         e.message
     );

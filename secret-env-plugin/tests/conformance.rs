@@ -243,6 +243,9 @@ fn close(p: &Plugin<Secret>) -> String {
 
 /// What one door does, as one comparable transcript.
 fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
+    let validated = [validate(p, ""), validate(p, "{}"), validate(p, "[1]")];
+    let unopened = resolve(p, &format!(r#"{{"key":"{SET}"}}"#));
+    let (opened, opened_again) = (open(p), open(p));
     let resolved: Vec<String> = [
         format!(r#"{{"key":"{SET}"}}"#),
         format!(r#"{{"key":"{UNSET}"}}"#),
@@ -257,10 +260,10 @@ fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
         "name": p.name(),
         "kind": format!("{:?}", p.kind()),
         "max_inflight": p.max_inflight(),
-        "validate": [validate(p, ""), validate(p, "{}"), validate(p, "[1]")],
-        "resolve_unopened": resolve(p, &format!(r#"{{"key":"{SET}"}}"#)),
-        "open": open(p),
-        "open_again": open(p),
+        "validate": validated,
+        "resolve_unopened": unopened,
+        "open": opened,
+        "open_again": opened_again,
         "resolve": resolved,
         "release_unknown": release(p, 42),
         "refresh": refresh(p),
@@ -329,7 +332,6 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
         linked["open_again"], "Refused lease=false ",
         "one open per instance"
     );
-    eprintln!("the linked transcript: {linked:#}");
     let mut resolved = linked["resolve"].clone();
     let not_object = resolved[4].as_str().unwrap().to_string();
     assert!(
