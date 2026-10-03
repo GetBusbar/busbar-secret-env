@@ -123,6 +123,7 @@ dependencies = [
  "busbar-contract",
  "busbar-plugin-loader",
  "busbar-secret-env",
+ "busbar-secret-env-plugin",
  "serde_json",
 ]
 
