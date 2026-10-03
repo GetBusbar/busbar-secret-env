@@ -1,0 +1,17 @@
+{
+  "env": {
+    "BUSBAR_SECRET_ENV_CONFORMANCE_SET": "s3cr3t-env-conformance",
+    "BUSBAR_SECRET_ENV_CONFORMANCE_EMPTY": "",
+    "BUSBAR_SECRET_ENV_CONFORMANCE_UNSET": null
+  },
+  "settings": {},
+  "secret": {
+    "bad_settings": ["[1]"],
+    "known": {
+      "resolve": { "key": "BUSBAR_SECRET_ENV_CONFORMANCE_SET" },
+      "material": "s3cr3t-env-conformance"
+    },
+    "unknown": { "key": "BUSBAR_SECRET_ENV_CONFORMANCE_UNSET" },
+    "malformed": "[1]"
+  }
+}
