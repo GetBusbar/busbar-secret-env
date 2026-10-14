@@ -1,0 +1,13 @@
+{
+  "env": {
+    "BUSBAR_SECRET_ENV_SUITE_KNOWN": "sk-conformance",
+    "BUSBAR_SECRET_ENV_SUITE_ABSENT": null
+  },
+  "settings": {},
+  "secret": {
+    "bad_settings": ["[1]"],
+    "known": { "resolve": { "key": "BUSBAR_SECRET_ENV_SUITE_KNOWN" }, "material": "sk-conformance" },
+    "unknown": { "key": "BUSBAR_SECRET_ENV_SUITE_ABSENT" },
+    "malformed": "[1]"
+  }
+}
