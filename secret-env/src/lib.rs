@@ -11,7 +11,9 @@
 //!
 //! It is an ordinary plugin (THE DESIGN §2): linked in the default build or dropped in, called
 //! through the secret kind table by the one dispatcher, and loaded only when a reference names it.
-//! Every refusal text is 1.5.5's, byte for byte; none carries the value.
+//! Every refusal of a variable or its `key` is 1.5.5's, byte for byte (`is unset`, `EMPTY value`,
+//! `requires settings.key`). The one other refusal, settings bytes that are not a JSON object, is the
+//! secret kind's ABI shape, which 1.5.5's in-process source never received. None carries the value.
 
 #![forbid(unsafe_code)]
 
@@ -30,8 +32,8 @@ pub const NAME: &str = "busbar-secret-env";
 /// Resolve `settings` (`{ key: VAR }`) to the variable's value, byte for byte.
 ///
 /// # Errors
-/// Fail-closed: an unset, non-UTF-8, empty or whitespace-only variable is refused, and so is a
-/// missing or blank `key`. The text names the variable, never its value.
+/// Fail-closed, as 1.5.5: an unset or non-UTF-8 variable (both "is unset") and an empty one are
+/// refused, and so is a missing or blank `key`. The text names the variable, never its value.
 pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretResult<Vec<u8>> {
     let var = match settings
         .get(SECRET_ENV_SETTING_KEY)
@@ -45,41 +47,19 @@ pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretR
             ))
         }
     };
-    // `std::env::var` collapses two DIFFERENT operator errors into one `Err`: `NotPresent` (the
-    // variable is absent) and `NotUnicode` (it is SET, and its value is not UTF-8). Reporting both
-    // as "unset" is a wrong diagnosis rather than a missing one — an operator told their variable
-    // is unset will set it again, which is the one action that cannot fix a value that is already
-    // there and mis-encoded. `var_os` keeps the two apart: `None` is genuinely absent, `Some(raw)`
-    // that fails `into_string` is present-but-unusable.
-    match std::env::var_os(var) {
-        None => Err(SecretModuleError::not_found(format!(
+    // 1.5.5's reading, byte for byte (v1.5.5 crates/busbar/src/config/secret.rs `resolve_builtin`):
+    // `std::env::var`, whose one `Err` covers a variable that is absent and one whose value is not
+    // UTF-8, both answered "is unset"; an EMPTY value refused; any other value, a whitespace-only
+    // one included, resolved untrimmed. The value is never quoted back.
+    match std::env::var(var) {
+        Ok(v) if !v.is_empty() => Ok(v.into_bytes()),
+        Ok(_) => Err(SecretModuleError::invalid(format!(
+            "secret env:{var} resolved to an EMPTY value; a secret must be non-empty \
+             (fail-closed)"
+        ))),
+        Err(_) => Err(SecretModuleError::not_found(format!(
             "secret env:{var} cannot resolve: environment variable '{var}' is unset"
         ))),
-        // The mis-encoded value is DROPPED, never quoted back: the whole point of this branch is
-        // that the variable holds a credential, and an error message is not a place to put one.
-        // Naming the variable is enough to act on.
-        Some(raw) => match raw.into_string() {
-            Err(_) => Err(SecretModuleError::invalid(format!(
-                "secret env:{var} cannot resolve: environment variable '{var}' IS SET but its \
-                 value is not valid UTF-8, so it cannot be read as a secret — this is an \
-                 ENCODING problem, not a missing variable; re-export it as UTF-8 (setting it \
-                 again will not help)"
-            ))),
-            Ok(v) if v.is_empty() => Err(SecretModuleError::invalid(format!(
-                "secret env:{var} resolved to an EMPTY value; a secret must be non-empty \
-                 (fail-closed)"
-            ))),
-            // A BLANK-but-present value is not a credential: "   " sent upstream as a bearer token
-            // is the failure this refuses. Only an ENTIRELY-whitespace value is refused — the
-            // accepted value is returned byte-for-byte, never trimmed, because trailing bytes are
-            // part of the secret for a PEM chain and this is the RAW-bytes path.
-            Ok(v) if v.trim().is_empty() => Err(SecretModuleError::invalid(format!(
-                "secret env:{var} resolved to a BLANK value (whitespace only); a secret must \
-                 carry actual content, and the variable IS SET — fix its value, not its \
-                 presence (fail-closed)"
-            ))),
-            Ok(v) => Ok(v.into_bytes()),
-        },
     }
 }
 

@@ -42,8 +42,11 @@ fn an_unset_variable_is_not_found_naming_it() {
     );
 }
 
+/// 1.5.5's `env` source (v1.5.5 crates/busbar/src/config/secret.rs `resolve_builtin`) refused only an
+/// EMPTY value; a whitespace-only value resolved, byte for byte. A port keeps 1.5.5's behaviour
+/// (THE DESIGN §2, "A port keeps 1.5.5's surface"; ARCHITECT ruling: no hardening is registered).
 #[test]
-fn empty_and_blank_values_are_refused_without_the_value() {
+fn an_empty_value_is_refused_and_a_blank_one_resolves_as_in_1_5_5() {
     let (empty, blank) = (unique("EMPTY"), unique("BLANK"));
     std::env::set_var(&empty, "");
     std::env::set_var(&blank, " \t ");
@@ -52,35 +55,26 @@ fn empty_and_blank_values_are_refused_without_the_value() {
         e.message,
         format!("secret env:{empty} resolved to an EMPTY value; a secret must be non-empty (fail-closed)")
     );
-    let e = resolve(&key(&blank)).unwrap_err();
-    assert!(
-        e.message.contains("BLANK value (whitespace only)"),
-        "{}",
-        e.message
-    );
-    assert_eq!(error_kind(e.kind), ERROR_KIND_INVALID);
+    assert_eq!(resolve(&key(&blank)).unwrap(), b" \t ");
     std::env::remove_var(&empty);
     std::env::remove_var(&blank);
 }
 
+/// 1.5.5 read the variable with `std::env::var`, whose one `Err` covers an absent variable and one
+/// whose value is not UTF-8, and answered both with the same text: "is unset". The value is never
+/// quoted.
 #[cfg(unix)]
 #[test]
-fn a_mis_encoded_value_is_not_reported_as_unset_and_is_not_quoted() {
+fn a_mis_encoded_value_gets_1_5_5_s_unset_text_and_is_not_quoted() {
     use std::os::unix::ffi::OsStrExt;
     let var = unique("NOTUTF8");
     std::env::set_var(&var, std::ffi::OsStr::from_bytes(b"ab\xffcd"));
     let e = resolve(&key(&var)).unwrap_err();
-    assert!(
-        e.message
-            .contains("IS SET but its value is not valid UTF-8"),
-        "{}",
-        e.message
+    assert_eq!(
+        e.message,
+        format!("secret env:{var} cannot resolve: environment variable '{var}' is unset")
     );
-    assert!(
-        !e.message.contains("is unset") && !e.message.contains("ab\u{fffd}cd"),
-        "{}",
-        e.message
-    );
+    assert_eq!(error_kind(e.kind), ERROR_KIND_NOT_FOUND);
     std::env::remove_var(&var);
 }
 
