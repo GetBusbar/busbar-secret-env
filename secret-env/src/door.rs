@@ -29,6 +29,7 @@ const fn word(class: u32) -> Rewrite {
         _reserved: 0,
         from: abi_str(SECRET_MODULE_ENV),
         to: abi_str(""),
+        ..Rewrite::ZERO
     }
 }
 
