@@ -298,10 +298,26 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
             (
                 busbar_contract::abi::mechanism::door::REWRITE_SUGAR,
                 "env".to_string(),
-                String::new()
+                "key".to_string()
+            ),
+            (
+                busbar_contract::abi::mechanism::door::REWRITE_SUGAR_SHOWN,
+                "env".to_string(),
+                "VAR".to_string()
+            ),
+            (
+                busbar_contract::abi::mechanism::door::REWRITE_SUGAR_NAMES,
+                "env".to_string(),
+                "the environment variable name".to_string()
+            ),
+            (
+                busbar_contract::abi::mechanism::door::REWRITE_SUGAR_ROLE,
+                "env".to_string(),
+                "fill".to_string()
             ),
         ],
-        "the Statement names the source by its module alias and its reference sugar"
+        "the Statement names the source by its module alias, its reference sugar (with its settings \
+         key), what a refusal names its value and its core role (busbar step 2c)"
     );
     let d = dispatcher();
     let linked = transcript(&linked(&d));
