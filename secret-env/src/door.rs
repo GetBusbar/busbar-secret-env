@@ -13,28 +13,38 @@
 //! * `release`, `close`, `cancel`, `tick`, `retire`, `drive` — the SDK's.
 
 use busbar_contract::abi::mechanism::call::{Outcome, BLOB_OCTETS};
-use busbar_contract::abi::mechanism::door::{Rewrite, Statement, REWRITE_ALIAS, REWRITE_SUGAR};
+use busbar_contract::abi::mechanism::door::{
+    Rewrite, Statement, REWRITE_ALIAS, REWRITE_SUGAR, REWRITE_SUGAR_NAMES, REWRITE_SUGAR_ROLE,
+    REWRITE_SUGAR_SHOWN,
+};
 use busbar_contract::abi::sdk::door::{abi_str, statement};
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
 use busbar_contract::abi::sdk::{Instance, Lent, Out, Safe, SafeSlot};
 use busbar_contract::abi::secret::{cancel, ResolveIn, ResolveOut, ERROR_KIND_UNSET};
-use busbar_contract::secret_ref::SECRET_MODULE_ENV;
 
 use crate::{error_kind, settings_of};
 
-/// A rewrite naming this source by the `env` word, in `class`.
-const fn word(class: u32) -> Rewrite {
+/// A rewrite naming this source by its word ([`crate::WORD`]), in `class`, carrying `to`.
+const fn rewrite(class: u32, to: &'static str) -> Rewrite {
     Rewrite {
         class,
         _reserved: 0,
-        from: abi_str(SECRET_MODULE_ENV),
-        to: abi_str(""),
+        from: abi_str(crate::WORD),
+        to: abi_str(to),
     }
 }
 
-/// The names config gives this source (THE DESIGN §2, the Statement's `rewrites`): the module alias
-/// (`module: env`) and the reference sugar (`{ env: VAR }`).
-const REWRITES: &[Rewrite] = &[word(REWRITE_ALIAS), word(REWRITE_SUGAR)];
+/// The names config gives this source (THE DESIGN §2, the Statement's `rewrites`; busbar step 2c,
+/// the sugar each secret plugin spells itself): the module alias (`module: env`), the
+/// reference sugar (`{ env: X }` becomes `{module: env, settings: {key: X}}`), what a
+/// refusal names its value, and its core role.
+const REWRITES: &[Rewrite] = &[
+    rewrite(REWRITE_ALIAS, ""),
+    rewrite(REWRITE_SUGAR, crate::KEY),
+    rewrite(REWRITE_SUGAR_SHOWN, "VAR"),
+    rewrite(REWRITE_SUGAR_NAMES, "the environment variable name"),
+    rewrite(REWRITE_SUGAR_ROLE, "fill"),
+];
 
 /// This plugin's Statement: its name, version, the most resolves one instance holds in flight, and
 /// the names config gives it.
