@@ -13,7 +13,8 @@ use busbar_plugin_loader::dispatch::LinkedRow;
 
 /// The rewrites the linked door's Statement states, `(class, from, to)`.
 fn rewrites() -> Vec<(u32, String, String)> {
-    let row = LinkedRow::of(busbar_secret_env::door::door).expect("the linked door states its Statement");
+    let row =
+        LinkedRow::of(busbar_secret_env::door::door).expect("the linked door states its Statement");
     read(&row.statement)
         .expect("the Statement rendering reads back")
         .rewrites
@@ -24,7 +25,7 @@ fn the_statement_declares_its_shorthand_and_the_settings_key_it_lands_under() {
     let r = rewrites();
     assert!(
         r.contains(&(REWRITE_SUGAR, "env".to_string(), "key".to_string())),
-        "the `{ env: X }` shorthand must state its settings key `key`: {r:?}"
+        "the `{{ env: X }}` shorthand must state its settings key `key`: {r:?}"
     );
 }
 
@@ -37,6 +38,6 @@ fn the_statement_declares_what_the_shorthand_value_names() {
             "env".to_string(),
             "the environment variable name".to_string()
         )),
-        "the `{ env: X }` shorthand must state what its value names: {r:?}"
+        "the `{{ env: X }}` shorthand must state what its value names: {r:?}"
     );
 }
