@@ -13,8 +13,8 @@ use busbar_plugin_loader::dispatch::LinkedRow;
 
 /// The rewrites the linked door's Statement states, `(class, from, to)`.
 fn rewrites() -> Vec<(u32, String, String)> {
-    let row =
-        LinkedRow::of(busbar_secret_env::door::door).expect("the linked door states its Statement");
+    let row = LinkedRow::of_macro(busbar_secret_env::door::MACRO_DOOR)
+        .expect("the linked door states its Statement");
     read(&row.statement)
         .expect("the Statement rendering reads back")
         .rewrites
