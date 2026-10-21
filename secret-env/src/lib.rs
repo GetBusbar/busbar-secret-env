@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE `env` SECRET SOURCE for busbar's `kind: secret` plugin family, on the secret kind's memory
-//! ABI (`busbar_contract::abi::secret`). This crate is the LOGIC and its door ([`door::door`]); the
+//! ABI (`busbar_contract::abi::secret`). This crate is the LOGIC and its door ([`door`]); the
 //! dropped-in `cdylib` is the sibling `busbar-secret-env-plugin` crate, which exports the same door
 //! as `busbar_plugin_door`.
 //!
@@ -23,24 +23,27 @@ use busbar_contract::abi::secret::{
 };
 use busbar_contract::secret::{SecretErrorKind, SecretModuleError, SecretResult};
 
-pub mod door;
+mod door;
+
+/// THE DOOR: this plugin's one public item (BUSBAR-1.6.0.md l.3567, Crate shape).
+pub use door::door;
 
 /// The word config names this source by: its module alias and its reference sugar
 /// (`{ env: X }`), spelled here, never by the contract (busbar step 2c).
-pub const WORD: &str = "env";
+const WORD: &str = "env";
 
 /// The settings key the sugar's value lands under (`{ env: X }` → `settings.key`).
-pub const KEY: &str = "key";
+const KEY: &str = "key";
 
 /// The plugin's name (the manifest name).
-pub const NAME: &str = "busbar-secret-env";
+const NAME: &str = "busbar-secret-env";
 
 /// Resolve `settings` (`{ key: VAR }`) to the variable's value, byte for byte.
 ///
 /// # Errors
 /// Fail-closed, as 1.5.5: an unset or non-UTF-8 variable (both "is unset") and an empty one are
 /// refused, and so is a missing or blank `key`. The text names the variable, never its value.
-pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretResult<Vec<u8>> {
+fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretResult<Vec<u8>> {
     let var = match settings.get(KEY).and_then(|v| v.as_str()) {
         Some(v) if !v.trim().is_empty() => v,
         _ => {
@@ -70,7 +73,7 @@ pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretR
 ///
 /// # Errors
 /// The bytes are not a JSON object.
-pub fn settings_of(bytes: &[u8]) -> SecretResult<serde_json::Map<String, serde_json::Value>> {
+fn settings_of(bytes: &[u8]) -> SecretResult<serde_json::Map<String, serde_json::Value>> {
     if bytes.is_empty() {
         return Ok(serde_json::Map::new());
     }
@@ -81,7 +84,7 @@ pub fn settings_of(bytes: &[u8]) -> SecretResult<serde_json::Map<String, serde_j
 
 /// The `abi::secret::ERROR_KIND_*` code of a [`SecretErrorKind`].
 #[must_use]
-pub const fn error_kind(kind: SecretErrorKind) -> u32 {
+const fn error_kind(kind: SecretErrorKind) -> u32 {
     match kind {
         SecretErrorKind::NotFound => ERROR_KIND_NOT_FOUND,
         SecretErrorKind::Unavailable => ERROR_KIND_UNAVAILABLE,
