@@ -13,8 +13,7 @@ use busbar_plugin_loader::dispatch::LinkedRow;
 
 /// The rewrites the linked door's Statement states, `(class, from, to)`.
 fn rewrites() -> Vec<(u32, String, String)> {
-    let row =
-        LinkedRow::of(busbar_secret_env::door).expect("the linked door states its Statement");
+    let row = LinkedRow::of(busbar_secret_env::door).expect("the linked door states its Statement");
     read(&row.statement)
         .expect("the Statement rendering reads back")
         .rewrites
@@ -45,8 +44,7 @@ fn the_statement_declares_what_the_shorthand_value_names() {
 /// The door's Statement carries this plugin's whole `declares` document (BUSBAR-1.6.0.md l.246).
 #[test]
 fn the_statement_carries_the_declares_document() {
-    let row =
-        LinkedRow::of(busbar_secret_env::door).expect("the linked door states its Statement");
+    let row = LinkedRow::of(busbar_secret_env::door).expect("the linked door states its Statement");
     let read = read(&row.statement).expect("the Statement rendering reads back");
     assert_eq!(
         busbar_contract::abi::mechanism::extensions::declares(&read.extensions.bytes),
