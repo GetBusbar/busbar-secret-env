@@ -37,8 +37,15 @@ use busbar_plugin_loader::dispatch::kinds::export::Export;
 use busbar_plugin_loader::dispatch::kinds::secret::Secret;
 use busbar_plugin_loader::dispatch::{
     in_head, load_dropped, load_linked, out_head, rendering_of_library, Bind, Called,
-    DispatchConfig, Dispatcher, Frame, LinkedRow, LoadError, NoSink, Plugin, NO_BLOB,
+    DispatchConfig, Dispatcher, Frame, LinkedRow, LoadError, LoadedDoor, NoSink, Plugin, NO_BLOB,
 };
+
+/// This crate's own door, as the loader names a compiled-in one.
+#[allow(unused_unsafe)]
+fn loaded() -> LoadedDoor {
+    // SAFETY: `door` is this crate's own `plugin_door!` entry.
+    unsafe { LoadedDoor::from_raw(busbar_secret_env::door) }
+}
 
 /// The value the set variable holds; the transcript carries it only as the resolved material.
 const VALUE: &str = "s3cr3t-env-conformance";
@@ -99,7 +106,7 @@ fn bind(d: &Dispatcher) -> Bind {
 }
 
 fn linked(d: &Dispatcher) -> Plugin<Secret> {
-    let row = LinkedRow::of(busbar_secret_env::door).expect("the linked row states");
+    let row = LinkedRow::of_loaded(loaded()).expect("the linked row states");
     load_linked::<Secret>(&row, bind(d)).expect("the linked door loads")
 }
 
@@ -108,11 +115,10 @@ fn dropped(d: &Dispatcher) -> Plugin<Secret> {
 }
 
 fn json(bytes: &[u8]) -> Blob {
-    Blob {
-        ptr: bytes.as_ptr(),
-        len: bytes.len(),
-        fmt: BLOB_JSON,
-        flags: 0,
+    // SAFETY: test-owned bytes the caller keeps alive for the call that reads the blob.
+    #[allow(unused_unsafe)]
+    unsafe {
+        Blob::from_raw_parts(bytes.as_ptr(), bytes.len(), BLOB_JSON, 0)
     }
 }
 
@@ -190,12 +196,12 @@ fn resolve(p: &Plugin<Secret>, settings: &str) -> String {
     );
     let c = p.call(secret::slot::RESOLVE, &mut f);
     let blob = f.out.secret;
-    let material = if blob.ptr.is_null() || blob.len == 0 {
+    let material = if blob.ptr().is_null() || blob.is_empty() {
         String::new()
     } else {
         // SAFETY: a READY resolve's `secret` names plugin memory held under the answer's lease
         // until `release`, which runs below, after this copy.
-        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(blob.ptr, blob.len) })
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(blob.ptr(), blob.len()) })
             .into_owned()
     };
     let released = if c.lease == 0 {
@@ -279,7 +285,7 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
     std::env::set_var(EMPTY, "");
     std::env::remove_var(UNSET);
     assert_eq!(
-        LinkedRow::of(busbar_secret_env::door)
+        LinkedRow::of_loaded(loaded())
             .expect("the linked row states")
             .statement,
         stated(),
@@ -375,7 +381,7 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
 #[test]
 fn a_wrong_kind_is_refused() {
     let d = dispatcher();
-    let row = LinkedRow::of(busbar_secret_env::door).expect("the linked row states");
+    let row = LinkedRow::of_loaded(loaded()).expect("the linked row states");
     let err =
         load_linked::<Export>(&row, bind(&d)).expect_err("a secret door is not an export door");
     let said = format!("{err:?}");
@@ -428,7 +434,7 @@ fn a_statement_mismatch_is_refused() {
 // crossings exactly at the script's pin, the two folds equal, and the suite's RED arms kept.
 // `plugin-ci.yml` runs it under `--release`.
 busbar_plugin_loader::conformance_suite! {
-    door: busbar_secret_env::door,
+    loaded: loaded(),
     cdylib: "busbar_secret_env_plugin",
     inputs: include_str!("conformance.json"),
 }
