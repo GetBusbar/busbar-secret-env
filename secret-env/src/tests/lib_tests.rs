@@ -91,6 +91,61 @@ fn a_missing_or_blank_key_is_invalid() {
     }
 }
 
+/// 1.5.5 read the key with `.and_then(|v| v.as_str())` (`resolve_builtin` / `SecretRef::env_var`),
+/// so a `key` that is not a JSON string (number, bool, object, array, null) was refused with the
+/// same text as a missing one; it was never stringified.
+#[test]
+fn a_non_string_key_is_invalid_as_in_1_5_5() {
+    let mut obj = serde_json::Map::new();
+    obj.insert("X".into(), "Y".into());
+    for v in [
+        serde_json::Value::from(5),
+        serde_json::Value::from(true),
+        serde_json::Value::Null,
+        serde_json::Value::Array(vec!["A".into()]),
+        serde_json::Value::Object(obj),
+    ] {
+        let mut s = serde_json::Map::new();
+        s.insert("key".into(), v);
+        let e = resolve(&s).unwrap_err();
+        assert_eq!(error_kind(e.kind), ERROR_KIND_INVALID);
+        assert_eq!(
+            e.message,
+            "secret module 'env' requires settings.key naming the environment variable \
+             (e.g. `{ env: MY_VAR }` or `{ module: env, settings: { key: MY_VAR } }`)"
+        );
+    }
+}
+
+/// 1.5.5 passed the key to `std::env::var` untrimmed: a padded key does not find the variable and
+/// the "is unset" text names the padded key.
+#[test]
+fn a_key_is_not_trimmed_as_in_1_5_5() {
+    let var = unique("PADDED");
+    std::env::set_var(&var, "v");
+    let padded = format!(" {var} ");
+    let e = resolve(&key(&padded)).unwrap_err();
+    assert_eq!(error_kind(e.kind), ERROR_KIND_NOT_FOUND);
+    assert_eq!(
+        e.message,
+        format!("secret env:{padded} cannot resolve: environment variable '{padded}' is unset")
+    );
+    std::env::remove_var(&var);
+}
+
+/// A key `std::env::var` cannot look up (a NUL byte or `=`) is an ordinary "is unset", not a panic.
+#[test]
+fn a_key_with_nul_or_equals_is_unset_not_a_panic() {
+    for k in ["A\u{0}B", "A=B"] {
+        let e = resolve(&key(k)).unwrap_err();
+        assert_eq!(error_kind(e.kind), ERROR_KIND_NOT_FOUND);
+        assert_eq!(
+            e.message,
+            format!("secret env:{k} cannot resolve: environment variable '{k}' is unset")
+        );
+    }
+}
+
 #[test]
 fn settings_that_are_not_an_object_are_invalid() {
     assert!(settings_of(b"").unwrap().is_empty());
