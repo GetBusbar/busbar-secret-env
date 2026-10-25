@@ -1,7 +1,10 @@
 {
   "env": {
     "BUSBAR_SECRET_ENV_SUITE_KNOWN": "sk-conformance",
-    "BUSBAR_SECRET_ENV_SUITE_ABSENT": null
+    "BUSBAR_SECRET_ENV_SUITE_ABSENT": null,
+    "BUSBAR_SECRET_ENV_CONFORMANCE_SET": "s3cr3t-env-conformance",
+    "BUSBAR_SECRET_ENV_CONFORMANCE_EMPTY": "",
+    "BUSBAR_SECRET_ENV_CONFORMANCE_UNSET": null
   },
   "settings": {},
   "secret": {

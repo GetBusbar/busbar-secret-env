@@ -40,7 +40,10 @@ use busbar_plugin_loader::dispatch::{
     DispatchConfig, Dispatcher, Frame, LinkedRow, LoadError, NoSink, Plugin, NO_BLOB,
 };
 
-/// The value the set variable holds; the transcript carries it only as the resolved material.
+/// The value the set variable holds; the transcript carries it only as the resolved material. The
+/// three variables are `conformance.json`'s `env` (with this value), set ONCE for the process by
+/// the suite's subject before any door reads one: a `set_var` here would race the dropped-in
+/// image's own std, which reads the environment without this binary's lock.
 const VALUE: &str = "s3cr3t-env-conformance";
 const SET: &str = "BUSBAR_SECRET_ENV_CONFORMANCE_SET";
 const EMPTY: &str = "BUSBAR_SECRET_ENV_CONFORMANCE_EMPTY";
@@ -160,11 +163,15 @@ fn open(p: &Plugin<Secret>) -> String {
 }
 
 fn refresh(p: &Plugin<Secret>) -> String {
+    refresh_with(p, NO_BLOB)
+}
+
+fn refresh_with(p: &Plugin<Secret>, settings: Blob) -> String {
     let mut f = Frame::new(
         RefreshIn {
             head: in_head(),
             generation: 2,
-            settings: NO_BLOB,
+            settings,
             secrets: std::ptr::null(),
             secrets_len: 0,
         },
@@ -243,7 +250,12 @@ fn close(p: &Plugin<Secret>) -> String {
 
 /// What one door does, as one comparable transcript.
 fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
-    let validated = [validate(p, ""), validate(p, "{}"), validate(p, "[1]")];
+    let validated = [
+        validate(p, ""),
+        validate(p, "{}"),
+        validate(p, "[1]"),
+        validate(p, r#"{"key":"X"}"#),
+    ];
     let unopened = resolve(p, &format!(r#"{{"key":"{SET}"}}"#));
     let (opened, opened_again) = (open(p), open(p));
     let resolved: Vec<String> = [
@@ -252,6 +264,7 @@ fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
         format!(r#"{{"key":"{EMPTY}"}}"#),
         r#"{"key":"  "}"#.to_string(),
         "[1]".to_string(),
+        format!(r#"{{"key":"{SET}","path":"/x"}}"#),
     ]
     .iter()
     .map(|s| resolve(p, s))
@@ -266,6 +279,7 @@ fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
         "open_again": opened_again,
         "resolve": resolved,
         "release_unknown": release(p, 42),
+        "refresh_refused": refresh_with(p, json(br#"{"key":"X"}"#)),
         "refresh": refresh(p),
         "tick": tick(p),
         "close": close(p),
@@ -275,9 +289,10 @@ fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
 /// The plugin answers as ONE plugin through either door, with 1.5.5's refusal texts.
 #[test]
 fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
-    std::env::set_var(SET, VALUE);
-    std::env::set_var(EMPTY, "");
-    std::env::remove_var(UNSET);
+    // The suite's subject applies `conformance.json`'s `env` once per process (SET, EMPTY, UNSET
+    // included), the one writer of the environment in this binary.
+    let _ = __busbar_conformance_subject();
+    assert_eq!(std::env::var(SET).as_deref(), Ok(VALUE));
     assert_eq!(
         LinkedRow::of(busbar_secret_env::door::door)
             .expect("the linked row states")
@@ -332,6 +347,7 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
             "Ready lease=false ",
             "Ready lease=false ",
             "Failed lease=false settings: must be a JSON object",
+            "Failed lease=false secret module 'env' takes no settings; remove settings.key (each reference names its variable in its own settings.key)",
         ])
     );
     assert!(
@@ -363,9 +379,15 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
             format!("Failed lease=false secret env:{EMPTY} resolved to an EMPTY value; a secret must be non-empty (fail-closed) kind=4 material=\"\""),
             "Failed lease=false secret module 'env' requires settings.key naming the environment variable (e.g. `{ env: MY_VAR }` or `{ module: env, settings: { key: MY_VAR } }`) kind=4 material=\"\"",
             "NOT-AN-OBJECT",
+            "Failed lease=false secret module 'env' does not take settings.path; a reference names only settings.key (fail-closed) kind=4 material=\"\"",
         ])
     );
     assert_eq!(linked["release_unknown"], "Refused lease=false ");
+    assert_eq!(
+        linked["refresh_refused"],
+        "Failed lease=false secret module 'env' takes no settings; remove settings.key (each reference names its variable in its own settings.key)",
+        "refresh refuses what validate refuses"
+    );
     assert_eq!(linked["refresh"], "Ready lease=false ");
     assert_eq!(linked["tick"], "Ready lease=false  next=0");
     assert_eq!(linked["close"], "Ready lease=false ");

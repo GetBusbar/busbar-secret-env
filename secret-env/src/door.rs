@@ -5,8 +5,9 @@
 //! lifecycle slots the SDK's generic lifecycle (`lifecycle: life(Env)`, [`Life`]) and `resolve` a
 //! [`SafeSlot`] — no `unsafe` in this crate.
 //!
-//! * `validate`, `open`, `refresh` — the source holds no settings and no state: any settings object
-//!   opens it.
+//! * `validate`, `open`, `refresh` — the source holds no settings and no state: empty settings or
+//!   an empty object open it, and any setting is refused naming it ([`crate::instance_settings`]),
+//!   the same at all three.
 //! * `resolve` — a reference's `{ key: VAR }` to the variable's value, READY under a lease (the
 //!   SDK's [`Held`] leases, zeroed on release), or FAILED with its `ERROR_KIND_*` and 1.5.5's text.
 //!   It never pends.
@@ -61,12 +62,16 @@ pub struct Env;
 impl Life for Env {
     const CANCEL: u32 = cancel::ABORTED;
 
-    fn open(_: &[u8], _: &[&[u8]], _: u64) -> Result<Self, Refusal> {
-        Ok(Env)
+    fn validate(settings: &[u8]) -> Result<(), Refusal> {
+        crate::instance_settings(settings).map_err(Refusal::failed)
     }
 
-    fn refresh(&self, _: &[u8], _: &[&[u8]], _: u64) -> Result<Refreshed, Refusal> {
-        Ok(Refreshed::default())
+    fn open(settings: &[u8], _: &[&[u8]], _: u64) -> Result<Self, Refusal> {
+        Self::validate(settings).map(|()| Env)
+    }
+
+    fn refresh(&self, settings: &[u8], _: &[&[u8]], _: u64) -> Result<Refreshed, Refusal> {
+        Self::validate(settings).map(|()| Refreshed::default())
     }
 }
 
