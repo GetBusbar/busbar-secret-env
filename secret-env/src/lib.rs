@@ -12,8 +12,13 @@
 //! It is an ordinary plugin (THE DESIGN §2): linked in the default build or dropped in, called
 //! through the secret kind table by the one dispatcher, and loaded only when a reference names it.
 //! Every refusal of a variable or its `key` is 1.5.5's, byte for byte (`is unset`, `EMPTY value`,
-//! `requires settings.key`). The one other refusal, settings bytes that are not a JSON object, is the
-//! secret kind's ABI shape, which 1.5.5's in-process source never received. None carries the value.
+//! `requires settings.key`). The other refusals are new in 1.6.0: settings bytes that are not a JSON
+//! object (the secret kind's ABI shape, which 1.5.5's in-process source never received), a reference
+//! naming a setting other than `key`, and instance settings, which this source takes none of
+//! ([`instance_settings`]). None carries the value.
+//!
+//! THE VALUE IS WIPED on every path but the one that hands it back: it is read as bytes into a
+//! wiped buffer, so a refused value (empty, or not UTF-8) is wiped as it drops.
 
 #![forbid(unsafe_code)]
 
@@ -22,6 +27,7 @@ use busbar_contract::abi::secret::{
     ERROR_KIND_UNAVAILABLE,
 };
 use busbar_contract::secret::{SecretErrorKind, SecretModuleError, SecretResult};
+use zeroize::Zeroizing;
 
 pub mod door;
 
@@ -39,7 +45,8 @@ pub const NAME: &str = "busbar-secret-env";
 ///
 /// # Errors
 /// Fail-closed, as 1.5.5: an unset or non-UTF-8 variable (both "is unset") and an empty one are
-/// refused, and so is a missing or blank `key`. The text names the variable, never its value.
+/// refused, and so is a missing or blank `key`. A reference naming any setting but `key` is refused
+/// naming it. The text names the variable, never its value.
 pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretResult<Vec<u8>> {
     let var = match settings.get(KEY).and_then(|v| v.as_str()) {
         Some(v) if !v.trim().is_empty() => v,
@@ -50,19 +57,57 @@ pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretR
             ))
         }
     };
+    if let Some(other) = settings.keys().find(|k| k.as_str() != KEY) {
+        return Err(SecretModuleError::invalid(format!(
+            "secret module 'env' does not take settings.{other}; a reference names only \
+             settings.key (fail-closed)"
+        )));
+    }
     // 1.5.5's reading, byte for byte (v1.5.5 crates/busbar/src/config/secret.rs `resolve_builtin`):
     // `std::env::var`, whose one `Err` covers a variable that is absent and one whose value is not
     // UTF-8, both answered "is unset"; an EMPTY value refused; any other value, a whitespace-only
-    // one included, resolved untrimmed. The value is never quoted back.
-    match std::env::var(var) {
-        Ok(v) if !v.is_empty() => Ok(v.into_bytes()),
-        Ok(_) => Err(SecretModuleError::invalid(format!(
+    // one included, resolved untrimmed. The value is never quoted back. It is read as bytes into a
+    // wiped buffer (`var` would drop a non-UTF-8 value unwiped inside its error).
+    let unset = || {
+        SecretModuleError::not_found(format!(
+            "secret env:{var} cannot resolve: environment variable '{var}' is unset"
+        ))
+    };
+    let Some(value) = std::env::var_os(var) else {
+        return Err(unset());
+    };
+    let mut bytes = Zeroizing::new(value.into_encoded_bytes());
+    if std::str::from_utf8(&bytes).is_err() {
+        return Err(unset());
+    }
+    if bytes.is_empty() {
+        return Err(SecretModuleError::invalid(format!(
             "secret env:{var} resolved to an EMPTY value; a secret must be non-empty \
              (fail-closed)"
-        ))),
-        Err(_) => Err(SecretModuleError::not_found(format!(
-            "secret env:{var} cannot resolve: environment variable '{var}' is unset"
-        ))),
+        )));
+    }
+    Ok(std::mem::take(&mut *bytes))
+}
+
+/// The instance settings (`secrets.env.settings`) as this source takes them: none. Empty bytes or
+/// an empty object open it; anything else is refused naming why, at `validate`, `open` and
+/// `refresh` alike, rather than ignored.
+///
+/// # Errors
+/// The settings are not a JSON object, or name a setting.
+pub fn instance_settings(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(serde_json::Value::Object(m)) => match m.keys().next() {
+            None => Ok(()),
+            Some(k) => Err(format!(
+                "secret module 'env' takes no settings; remove settings.{k} (each reference \
+                 names its variable in its own settings.key)"
+            )),
+        },
+        _ => Err("settings: must be a JSON object".to_string()),
     }
 }
 

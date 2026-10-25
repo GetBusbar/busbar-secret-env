@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 [package]
 name = "busbar-secret-env"
-version = "1.0.0"
+version = "1.6.0"
 publish = false            # linked into busbar at a pinned rev, or shipped as a signed tarball; never to crates.io
 edition = "2021"
-rust-version = "1.97"
+rust-version.workspace = true
 description = "The environment-variable secret source for busbar's kind:secret plugin family, on the secret kind's memory ABI: `{ env: VAR }` resolves to the variable's value, byte for byte, fail-closed."
 license = "Apache-2.0"
 
@@ -18,3 +18,8 @@ crate-type = ["rlib"]
 # The ONE busbar crate a plugin names (#40: contract only), pinned by git rev to `.busbar-ref`.
 busbar-contract = { workspace = true }
 serde_json = { workspace = true }
+# Wipes a value it refuses (an empty or non-UTF-8 one) as it drops.
+zeroize = { workspace = true }
+
+[lints]
+workspace = true

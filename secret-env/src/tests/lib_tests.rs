@@ -158,3 +158,46 @@ fn settings_that_are_not_an_object_are_invalid() {
         e.message
     );
 }
+
+/// A reference names its variable and nothing else: any other setting (a typo, a key meant for
+/// another source) is refused naming it, rather than ignored (sibling review 2026-10-25).
+#[test]
+fn a_reference_naming_another_setting_is_invalid_naming_it() {
+    let var = unique("EXTRA");
+    std::env::set_var(&var, "v");
+    let mut s = key(&var);
+    s.insert("path".into(), "/x".into());
+    let e = resolve(&s).unwrap_err();
+    assert_eq!(error_kind(e.kind), ERROR_KIND_INVALID);
+    assert_eq!(
+        e.message,
+        "secret module 'env' does not take settings.path; a reference names only settings.key \
+         (fail-closed)"
+    );
+    std::env::remove_var(&var);
+}
+
+/// The source takes no instance settings: none or an empty object opens it, and a setting is
+/// refused naming it (not ignored), as are bytes that are not a JSON object.
+#[test]
+fn instance_settings_are_none_and_a_setting_is_refused_naming_it() {
+    assert_eq!(instance_settings(b""), Ok(()));
+    assert_eq!(instance_settings(b"{}"), Ok(()));
+    assert_eq!(instance_settings(b" { } "), Ok(()));
+    assert_eq!(
+        instance_settings(br#"{"key":"X"}"#),
+        Err(
+            "secret module 'env' takes no settings; remove settings.key (each reference names \
+             its variable in its own settings.key)"
+                .to_string()
+        )
+    );
+    for bad in [&b"[1]"[..], b"null", b"\"x\"", b"{"] {
+        assert_eq!(
+            instance_settings(bad),
+            Err("settings: must be a JSON object".to_string()),
+            "{}",
+            String::from_utf8_lossy(bad)
+        );
+    }
+}
