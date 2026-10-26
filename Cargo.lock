@@ -100,7 +100,6 @@ version = "1.0.0"
 dependencies = [
  "busbar-contract",
  "serde_json",
- "zeroize",
 ]
 
 [[package]]
