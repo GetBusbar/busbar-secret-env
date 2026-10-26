@@ -6,6 +6,7 @@
     "BUSBAR_SECRET_ENV_CONFORMANCE_EMPTY": "",
     "BUSBAR_SECRET_ENV_CONFORMANCE_UNSET": null
   },
+  "credentials": ["sk-conformance", "s3cr3t-env-conformance"],
   "settings": {},
   "secret": {
     "bad_settings": ["[1]"],
