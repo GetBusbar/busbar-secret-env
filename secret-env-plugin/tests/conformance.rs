@@ -382,7 +382,11 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
             "Failed lease=false secret module 'env' does not take settings.path; a reference names only settings.key (fail-closed) kind=4 material=\"\"",
         ])
     );
-    assert_eq!(linked["release_unknown"], "Refused lease=false ");
+    assert_eq!(
+        linked["release_unknown"],
+        "Refused lease=false release: no such lease",
+        "releasing a lease this instance does not hold is refused with the SDK's NO_SUCH_LEASE text"
+    );
     assert_eq!(
         linked["refresh_refused"],
         "Failed lease=false secret module 'env' takes no settings; remove settings.key (each reference names its variable in its own settings.key)",
