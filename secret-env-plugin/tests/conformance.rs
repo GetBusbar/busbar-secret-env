@@ -449,7 +449,7 @@ fn a_statement_mismatch_is_refused() {
 // before any fold, apart from the variables the transcript test above sets); every step's
 // crossings exactly at the script's pin, the two folds equal, and the suite's RED arms kept.
 // `plugin-ci.yml` runs it under `--release`.
-busbar_plugin_loader::conformance_suite! {
+busbar_test_kit::conformance_suite! {
     door: busbar_secret_env::door::door,
     cdylib: "busbar_secret_env_plugin",
     inputs: include_str!("conformance.json"),
