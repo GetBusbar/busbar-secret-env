@@ -9,7 +9,7 @@
 //!   an empty object open it, and any setting is refused naming it ([`crate::instance_settings`]),
 //!   the same at all three.
 //! * `resolve` — a reference's `{ key: VAR }` to the variable's value, READY under a lease (the
-//!   SDK's [`Held`] leases, zeroed on release), or FAILED with its `ERROR_KIND_*` and 1.5.5's text.
+//!   SDK's [`Held`] leases, zeroed on release), or FAILED with its `ERROR_KIND_*` and its text.
 //!   It never pends.
 //! * `release`, `close`, `cancel`, `tick`, `retire`, `drive` — the SDK's.
 
@@ -35,8 +35,8 @@ const fn rewrite(class: u32, to: &'static str) -> Rewrite {
     }
 }
 
-/// The names config gives this source (THE DESIGN §2, the Statement's `rewrites`; busbar step 2c,
-/// the sugar each secret plugin spells itself): the module alias (`module: env`), the
+/// The names config gives this source (the Statement's `rewrites`, the sugar each secret plugin
+/// spells itself): the module alias (`module: env`), the
 /// reference sugar (`{ env: X }` becomes `{module: env, settings: {key: X}}`), what a
 /// refusal names its value, and its core role.
 const REWRITES: &[Rewrite] = &[
