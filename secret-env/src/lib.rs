@@ -9,13 +9,11 @@
 //! `resolve` reads the environment variable its settings' `key` names. `{ env: VAR }` is the
 //! reference sugar for `{ module: env, settings: { key: VAR } }`.
 //!
-//! It is an ordinary plugin (THE DESIGN §2): linked in the default build or dropped in, called
-//! through the secret kind table by the one dispatcher, and loaded only when a reference names it.
-//! Every refusal of a variable or its `key` is 1.5.5's, byte for byte (`is unset`, `EMPTY value`,
-//! `requires settings.key`). The other refusals are new in 1.6.0: settings bytes that are not a JSON
-//! object (the secret kind's ABI shape, which 1.5.5's in-process source never received), a reference
-//! naming a setting other than `key`, and instance settings, which this source takes none of
-//! ([`instance_settings`]). None carries the value.
+//! It is an ordinary plugin: linked in the default build or dropped in, called through the secret
+//! kind table by the one dispatcher, and loaded only when a reference names it. A variable or `key`
+//! is refused with `is unset`, `EMPTY value` or `requires settings.key`. Also refused: settings
+//! bytes that are not a JSON object, a reference naming a setting other than `key`, and instance
+//! settings, which this source takes none of ([`instance_settings`]). None carries the value.
 //!
 //! THE VALUE IS WIPED on every path but the one that hands it back: it is read as bytes into a
 //! wiped buffer, so a refused value (empty, or not UTF-8) is wiped as it drops.
@@ -44,7 +42,7 @@ pub const NAME: &str = "busbar-secret-env";
 /// Resolve `settings` (`{ key: VAR }`) to the variable's value, byte for byte.
 ///
 /// # Errors
-/// Fail-closed, as 1.5.5: an unset or non-UTF-8 variable (both "is unset") and an empty one are
+/// Fail-closed: an unset or non-UTF-8 variable (both "is unset") and an empty one are
 /// refused, and so is a missing or blank `key`. A reference naming any setting but `key` is refused
 /// naming it. The text names the variable, never its value.
 pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretResult<Vec<u8>> {
@@ -63,9 +61,8 @@ pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretR
              settings.key (fail-closed)"
         )));
     }
-    // 1.5.5's reading, byte for byte (v1.5.5 crates/busbar/src/config/secret.rs `resolve_builtin`):
-    // `std::env::var`, whose one `Err` covers a variable that is absent and one whose value is not
-    // UTF-8, both answered "is unset"; an EMPTY value refused; any other value, a whitespace-only
+    // Like `std::env::var`, whose one `Err` covers a variable that is absent and one whose value is
+    // not UTF-8, both answered "is unset"; an EMPTY value refused; any other value, a whitespace-only
     // one included, resolved untrimmed. The value is never quoted back. It is read as bytes into a
     // wiped buffer (`var` would drop a non-UTF-8 value unwiped inside its error).
     let unset = || {
