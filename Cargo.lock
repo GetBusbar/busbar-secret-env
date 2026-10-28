@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "busbar-secret-env"
-version = "1.0.0"
+version = "1.6.0"
 dependencies = [
  "busbar-contract",
  "serde_json",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "busbar-secret-env-plugin"
-version = "1.0.0"
+version = "1.6.0"
 dependencies = [
  "busbar-contract",
  "busbar-plugin-loader",
