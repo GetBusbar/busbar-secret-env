@@ -5,7 +5,14 @@
 //! busbar's `plugin-loader/src/builtin_secret.rs`).
 
 use super::*;
+use busbar_contract::abi::sdk::secret::{error_kind, settings_of, takes_no_settings};
+use busbar_contract::abi::secret::{ERROR_KIND_INVALID, ERROR_KIND_NOT_FOUND};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// The instance settings as the door judges them (`validate`, `open`, `refresh`).
+fn instance_settings(bytes: &[u8]) -> Result<(), String> {
+    takes_no_settings(bytes, WORD, NAMES)
+}
 
 /// A process-unique variable name, so parallel tests never share one.
 fn unique(tag: &str) -> String {
