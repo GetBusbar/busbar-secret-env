@@ -18,8 +18,6 @@ crate-type = ["rlib"]
 # The ONE busbar crate a plugin names (#40: contract only), pinned by git rev to `.busbar-ref`.
 busbar-contract = { workspace = true }
 serde_json = { workspace = true }
-# Wipes a value it refuses (an empty or non-UTF-8 one) as it drops.
-zeroize = { workspace = true }
 
 [lints]
 workspace = true

@@ -18,6 +18,9 @@ const CANARY: &[u8] = b"CANARY-ENV-VALUE-5d1e";
 static ARMED: AtomicBool = AtomicBool::new(false);
 static SAW: AtomicBool = AtomicBool::new(false);
 
+/// One armed test at a time: `ARMED` and `SAW` are the process's.
+static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A naive byte search; allocates nothing.
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.len() >= needle.len() && hay.windows(needle.len()).any(|w| w == needle)
@@ -51,6 +54,9 @@ static ALLOCATOR: Scanning = Scanning;
 #[cfg(unix)]
 #[test]
 fn a_refused_non_utf8_value_is_wiped_before_it_is_freed() {
+    let _one = ONE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use std::os::unix::ffi::OsStrExt;
     let var = "BUSBAR_SECRET_ENV_WIPING_NOT_UTF8";
     let mut value = CANARY.to_vec();
@@ -68,6 +74,33 @@ fn a_refused_non_utf8_value_is_wiped_before_it_is_freed() {
     assert!(
         !SAW.load(Ordering::SeqCst),
         "a refused value reached the allocator unwiped"
+    );
+    std::env::remove_var(var);
+}
+
+/// The credential chip, row 6 (host-owned secret bytes): a RESOLVED value is held only in a
+/// zeroizing holder, so when the source's answer drops (the SDK has written it into the host's
+/// buffer), its heap block is wiped before it is freed. RED while `resolve` answered a plain
+/// `Vec<u8>`.
+#[test]
+fn a_resolved_value_is_wiped_before_it_is_freed() {
+    let _one = ONE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let var = "BUSBAR_SECRET_ENV_WIPING_RESOLVED";
+    std::env::set_var(var, std::str::from_utf8(CANARY).expect("ascii"));
+    let mut settings = serde_json::Map::new();
+    settings.insert("key".into(), var.into());
+
+    ARMED.store(true, Ordering::SeqCst);
+    let resolved = busbar_secret_env::resolve(&settings);
+    assert!(resolved.is_ok(), "the variable resolves");
+    drop(resolved);
+    ARMED.store(false, Ordering::SeqCst);
+
+    assert!(
+        !SAW.load(Ordering::SeqCst),
+        "a resolved value reached the allocator unwiped"
     );
     std::env::remove_var(var);
 }
