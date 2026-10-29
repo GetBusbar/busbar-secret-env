@@ -13,19 +13,18 @@
 //! kind table by the one dispatcher, and loaded only when a reference names it. A variable or `key`
 //! is refused with `is unset`, `EMPTY value` or `requires settings.key`. Also refused: settings
 //! bytes that are not a JSON object, a reference naming a setting other than `key`, and instance
-//! settings, which this source takes none of ([`instance_settings`]). None carries the value.
+//! settings, which this source takes none of (the SDK's `takes_no_settings`, naming [`NAMES`]).
+//! None carries the value.
 //!
-//! THE VALUE IS WIPED on every path but the one that hands it back: it is read as bytes into a
-//! wiped buffer, so a refused value (empty, or not UTF-8) is wiped as it drops.
+//! THE VALUE IS HELD, NEVER COPIED (the credential chip, row 6: host-owned secret bytes): it is
+//! read as bytes straight into a zeroizing [`Held`], refused or not, and leaves it only through the
+//! SDK's `resolve` answer, into the host's buffer ([`door`]). A refused value (empty, or not
+//! UTF-8) is wiped as it drops, and so is a resolved one once the host has it.
 
 #![forbid(unsafe_code)]
 
-use busbar_contract::abi::secret::{
-    ERROR_KIND_DENIED, ERROR_KIND_INTERNAL, ERROR_KIND_INVALID, ERROR_KIND_NOT_FOUND,
-    ERROR_KIND_UNAVAILABLE,
-};
-use busbar_contract::secret::{SecretErrorKind, SecretModuleError, SecretResult};
-use zeroize::Zeroizing;
+use busbar_contract::abi::sdk::cred::Held;
+use busbar_contract::secret::{SecretModuleError, SecretResult};
 
 pub mod door;
 
@@ -36,16 +35,23 @@ pub const WORD: &str = "env";
 /// The settings key the sugar's value lands under (`{ env: X }` → `settings.key`).
 pub const KEY: &str = "key";
 
+/// Where a reference names its value, as a refusal of instance settings says it (the SDK's
+/// `takes_no_settings`, at `validate`, `open` and `refresh` alike).
+pub const NAMES: &str = "variable in its own settings.key";
+
 /// The plugin's name (the manifest name).
 pub const NAME: &str = "busbar-secret-env";
 
-/// Resolve `settings` (`{ key: VAR }`) to the variable's value, byte for byte.
+/// Resolve `settings` (`{ key: VAR }`) to the variable's value, byte for byte, in a zeroizing
+/// [`Held`] (no getter: it reaches the host only through the SDK's `resolve` answer).
 ///
 /// # Errors
 /// Fail-closed: an unset or non-UTF-8 variable (both "is unset") and an empty one are
 /// refused, and so is a missing or blank `key`. A reference naming any setting but `key` is refused
 /// naming it. The text names the variable, never its value.
-pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretResult<Vec<u8>> {
+pub fn resolve(
+    settings: &serde_json::Map<String, serde_json::Value>,
+) -> SecretResult<Held<Vec<u8>>> {
     let var = match settings.get(KEY).and_then(|v| v.as_str()) {
         Some(v) if !v.trim().is_empty() => v,
         _ => {
@@ -63,8 +69,9 @@ pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretR
     }
     // Like `std::env::var`, whose one `Err` covers a variable that is absent and one whose value is
     // not UTF-8, both answered "is unset"; an EMPTY value refused; any other value, a whitespace-only
-    // one included, resolved untrimmed. The value is never quoted back. It is read as bytes into a
-    // wiped buffer (`var` would drop a non-UTF-8 value unwiped inside its error).
+    // one included, resolved untrimmed. The value is never quoted back. It is MOVED (never copied)
+    // into a zeroizing holder before any judgement (`var` would drop a non-UTF-8 value unwiped
+    // inside its error).
     let unset = || {
         SecretModuleError::not_found(format!(
             "secret env:{var} cannot resolve: environment variable '{var}' is unset"
@@ -73,64 +80,19 @@ pub fn resolve(settings: &serde_json::Map<String, serde_json::Value>) -> SecretR
     let Some(value) = std::env::var_os(var) else {
         return Err(unset());
     };
-    let mut bytes = Zeroizing::new(value.into_encoded_bytes());
-    if std::str::from_utf8(&bytes).is_err() {
+    let bytes = value.into_encoded_bytes();
+    let text = std::str::from_utf8(&bytes).is_ok();
+    let held = Held::new(bytes);
+    if !text {
         return Err(unset());
     }
-    if bytes.is_empty() {
+    if held.is_empty() {
         return Err(SecretModuleError::invalid(format!(
             "secret env:{var} resolved to an EMPTY value; a secret must be non-empty \
              (fail-closed)"
         )));
     }
-    Ok(std::mem::take(&mut *bytes))
-}
-
-/// The instance settings (`secrets.env.settings`) as this source takes them: none. Empty bytes or
-/// an empty object open it; anything else is refused naming why, at `validate`, `open` and
-/// `refresh` alike, rather than ignored.
-///
-/// # Errors
-/// The settings are not a JSON object, or name a setting.
-pub fn instance_settings(bytes: &[u8]) -> Result<(), String> {
-    if bytes.is_empty() {
-        return Ok(());
-    }
-    match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(serde_json::Value::Object(m)) => match m.keys().next() {
-            None => Ok(()),
-            Some(k) => Err(format!(
-                "secret module 'env' takes no settings; remove settings.{k} (each reference \
-                 names its variable in its own settings.key)"
-            )),
-        },
-        _ => Err("settings: must be a JSON object".to_string()),
-    }
-}
-
-/// A resolve's settings bytes as the JSON object they must be (empty = none).
-///
-/// # Errors
-/// The bytes are not a JSON object.
-pub fn settings_of(bytes: &[u8]) -> SecretResult<serde_json::Map<String, serde_json::Value>> {
-    if bytes.is_empty() {
-        return Ok(serde_json::Map::new());
-    }
-    serde_json::from_slice(bytes).map_err(|e| {
-        SecretModuleError::invalid(format!("secret settings are not a JSON object: {e}"))
-    })
-}
-
-/// The `abi::secret::ERROR_KIND_*` code of a [`SecretErrorKind`].
-#[must_use]
-pub const fn error_kind(kind: SecretErrorKind) -> u32 {
-    match kind {
-        SecretErrorKind::NotFound => ERROR_KIND_NOT_FOUND,
-        SecretErrorKind::Unavailable => ERROR_KIND_UNAVAILABLE,
-        SecretErrorKind::Denied => ERROR_KIND_DENIED,
-        SecretErrorKind::Invalid => ERROR_KIND_INVALID,
-        SecretErrorKind::Internal => ERROR_KIND_INTERNAL,
-    }
+    Ok(held)
 }
 
 #[cfg(test)]

@@ -5,7 +5,14 @@
 //! busbar's `plugin-loader/src/builtin_secret.rs`).
 
 use super::*;
+use busbar_contract::abi::sdk::secret::{error_kind, settings_of, takes_no_settings};
+use busbar_contract::abi::secret::{ERROR_KIND_INVALID, ERROR_KIND_NOT_FOUND};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// The instance settings as the door judges them (`validate`, `open`, `refresh`).
+fn instance_settings(bytes: &[u8]) -> Result<(), String> {
+    takes_no_settings(bytes, WORD, NAMES)
+}
 
 /// A process-unique variable name, so parallel tests never share one.
 fn unique(tag: &str) -> String {
@@ -27,14 +34,14 @@ fn key(v: &str) -> serde_json::Map<String, serde_json::Value> {
 fn a_set_variable_resolves_byte_for_byte_untrimmed() {
     let var = unique("SET");
     std::env::set_var(&var, "  v\n");
-    assert_eq!(resolve(&key(&var)).unwrap(), b"  v\n");
+    assert!(resolve(&key(&var)).expect("resolves") == Held::new(b"  v\n".to_vec()));
     std::env::remove_var(&var);
 }
 
 #[test]
 fn an_unset_variable_is_not_found_naming_it() {
     let var = unique("UNSET");
-    let e = resolve(&key(&var)).unwrap_err();
+    let e = resolve(&key(&var)).err().expect("refused");
     assert_eq!(error_kind(e.kind), ERROR_KIND_NOT_FOUND);
     assert_eq!(
         e.message,
@@ -50,12 +57,12 @@ fn an_empty_value_is_refused_and_a_blank_one_resolves_as_in_1_5_5() {
     let (empty, blank) = (unique("EMPTY"), unique("BLANK"));
     std::env::set_var(&empty, "");
     std::env::set_var(&blank, " \t ");
-    let e = resolve(&key(&empty)).unwrap_err();
+    let e = resolve(&key(&empty)).err().expect("refused");
     assert_eq!(
         e.message,
         format!("secret env:{empty} resolved to an EMPTY value; a secret must be non-empty (fail-closed)")
     );
-    assert_eq!(resolve(&key(&blank)).unwrap(), b" \t ");
+    assert!(resolve(&key(&blank)).expect("resolves") == Held::new(b" \t ".to_vec()));
     std::env::remove_var(&empty);
     std::env::remove_var(&blank);
 }
@@ -69,7 +76,7 @@ fn a_mis_encoded_value_gets_1_5_5_s_unset_text_and_is_not_quoted() {
     use std::os::unix::ffi::OsStrExt;
     let var = unique("NOTUTF8");
     std::env::set_var(&var, std::ffi::OsStr::from_bytes(b"ab\xffcd"));
-    let e = resolve(&key(&var)).unwrap_err();
+    let e = resolve(&key(&var)).err().expect("refused");
     assert_eq!(
         e.message,
         format!("secret env:{var} cannot resolve: environment variable '{var}' is unset")
@@ -81,7 +88,7 @@ fn a_mis_encoded_value_gets_1_5_5_s_unset_text_and_is_not_quoted() {
 #[test]
 fn a_missing_or_blank_key_is_invalid() {
     for s in [serde_json::Map::new(), key("  "), key("\t\n")] {
-        let e = resolve(&s).unwrap_err();
+        let e = resolve(&s).err().expect("refused");
         assert_eq!(error_kind(e.kind), ERROR_KIND_INVALID);
         assert_eq!(
             e.message,
@@ -107,7 +114,7 @@ fn a_non_string_key_is_invalid_as_in_1_5_5() {
     ] {
         let mut s = serde_json::Map::new();
         s.insert("key".into(), v);
-        let e = resolve(&s).unwrap_err();
+        let e = resolve(&s).err().expect("refused");
         assert_eq!(error_kind(e.kind), ERROR_KIND_INVALID);
         assert_eq!(
             e.message,
@@ -124,7 +131,7 @@ fn a_key_is_not_trimmed_as_in_1_5_5() {
     let var = unique("PADDED");
     std::env::set_var(&var, "v");
     let padded = format!(" {var} ");
-    let e = resolve(&key(&padded)).unwrap_err();
+    let e = resolve(&key(&padded)).err().expect("refused");
     assert_eq!(error_kind(e.kind), ERROR_KIND_NOT_FOUND);
     assert_eq!(
         e.message,
@@ -137,7 +144,7 @@ fn a_key_is_not_trimmed_as_in_1_5_5() {
 #[test]
 fn a_key_with_nul_or_equals_is_unset_not_a_panic() {
     for k in ["A\u{0}B", "A=B"] {
-        let e = resolve(&key(k)).unwrap_err();
+        let e = resolve(&key(k)).err().expect("refused");
         assert_eq!(error_kind(e.kind), ERROR_KIND_NOT_FOUND);
         assert_eq!(
             e.message,
@@ -167,7 +174,7 @@ fn a_reference_naming_another_setting_is_invalid_naming_it() {
     std::env::set_var(&var, "v");
     let mut s = key(&var);
     s.insert("path".into(), "/x".into());
-    let e = resolve(&s).unwrap_err();
+    let e = resolve(&s).err().expect("refused");
     assert_eq!(error_kind(e.kind), ERROR_KIND_INVALID);
     assert_eq!(
         e.message,
