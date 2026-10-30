@@ -12,7 +12,11 @@ First-party signed kind:secret plugin cdylib: the environment-variable secret so
 
 ## What it is for
 
-`busbar-secret-env` is a `kind: secret` busbar plugin.
+`busbar-secret-env` is a `kind: secret` busbar plugin. It resolves a secret reference `{ env: VAR }`
+to the bytes of the environment variable `VAR`, exactly as stored (untrimmed).
+
+It is linked in busbar's default build and also ships as a droppable cdylib for builds without it.
+It reads only the process environment: no files, no network.
 
 ## Config
 
