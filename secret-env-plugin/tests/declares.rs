@@ -10,7 +10,7 @@ use busbar_plugin_loader::sign::Declares;
 
 #[test]
 fn the_declares_document_declares_nothing() {
-    let declares = Declares::from_declares_json(include_bytes!("../../secret-env/declares.json"))
+    let declares = Declares::from_declares_json(busbar_secret_env::DECLARES.as_bytes())
         .expect("the declares document reads");
     assert_eq!(
         declares,

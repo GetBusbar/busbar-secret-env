@@ -42,6 +42,11 @@ pub const NAMES: &str = "variable in its own settings.key";
 /// The plugin's name (the manifest name).
 pub const NAME: &str = "busbar-secret-env";
 
+/// The plugin's `declares` section (its `declares.json`), as a linked build reads it beside a
+/// dropped-in copy's signed one: this source reads only the process environment, so it declares
+/// nothing (no disk, no network, no diagnostics).
+pub const DECLARES: &str = include_str!("../declares.json");
+
 /// Resolve `settings` (`{ key: VAR }`) to the variable's value, byte for byte, in a zeroizing
 /// [`Held`] (no getter: it reaches the host only through the SDK's `resolve` answer).
 ///
