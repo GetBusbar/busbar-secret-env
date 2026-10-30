@@ -32,9 +32,8 @@ use busbar_contract::abi::mechanism::lifecycle::{
     slot as lc, OpenIn, OpenOut, RefreshIn, ReleaseIn, TickIn, TickOut, ValidateIn,
 };
 use busbar_contract::abi::mechanism::rendering::RENDERING_MAGIC;
-use busbar_contract::abi::mechanism::{KindCode, MECHANISM_VERSION};
+use busbar_contract::abi::mechanism::MECHANISM_VERSION;
 use busbar_contract::abi::secret::{self, ResolveIn, ResolveOut};
-use busbar_plugin_loader::dispatch::kinds::export::Export;
 use busbar_plugin_loader::dispatch::kinds::secret::Secret;
 use busbar_plugin_loader::dispatch::{
     in_head, load_dropped, load_linked, out_head, rendering_of_library, Bind, Called,
@@ -425,63 +424,12 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
     assert_eq!(linked["close"], "Ready lease=false ");
 }
 
-/// RED: the door asked for as another kind is refused, by either origin.
+/// RED: a manifest stating another mechanism than the host's is refused before `dlopen`. The
+/// published suite's RED arms own the wrong kind, the kind ABI and the Statement; the mechanism
+/// word is the one manifest word they do not move.
 #[test]
-fn a_wrong_kind_is_refused() {
+fn a_manifest_stating_another_mechanism_is_refused() {
     let d = dispatcher();
-    let row = LinkedRow::of(busbar_secret_env::door::door).expect("the linked row states");
-    let err =
-        load_linked::<Export>(&row, bind(&d)).expect_err("a secret door is not an export door");
-    assert!(
-        matches!(
-            err,
-            LoadError::WrongKind {
-                door: KindCode::Secret,
-                want: KindCode::Export
-            }
-        ),
-        "{err:?}"
-    );
-
-    let as_export = stating(&[
-        (1, KindCode::Export as u32),
-        (2, busbar_contract::abi::export::ABI_VERSION),
-    ]);
-    let err = load_dropped::<Export>(&cdylib(), &as_export, bind(&d))
-        .expect_err("the dropped-in secret door is not an export door");
-    assert!(
-        matches!(
-            err,
-            LoadError::WrongKind {
-                door: KindCode::Secret,
-                want: KindCode::Export
-            }
-        ),
-        "{err:?}"
-    );
-}
-
-/// RED: a manifest whose statement disagrees with what is asked is refused before `dlopen`; one
-/// stating 1.5.5's secret ABI (v1) is refused (ABI-b6).
-#[test]
-fn a_statement_mismatch_is_refused() {
-    let d = dispatcher();
-    let err = load_dropped::<Secret>(
-        &cdylib(),
-        &stating(&[(1, KindCode::Export as u32)]),
-        bind(&d),
-    )
-    .expect_err("a manifest stating another kind is refused");
-    assert!(matches!(err, LoadError::ManifestKind { .. }), "{err:?}");
-
-    let err = load_dropped::<Secret>(
-        &cdylib(),
-        &stating(&[(2, secret::ABI_VERSION - 1)]),
-        bind(&d),
-    )
-    .expect_err("a manifest stating 1.5.5's secret ABI is refused");
-    assert!(matches!(err, LoadError::ManifestKindAbi { .. }), "{err:?}");
-
     let err = load_dropped::<Secret>(&cdylib(), &stating(&[(0, MECHANISM_VERSION + 1)]), bind(&d))
         .expect_err("a manifest stating another mechanism is refused");
     assert!(
