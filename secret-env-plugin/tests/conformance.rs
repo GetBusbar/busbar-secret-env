@@ -2,25 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! **ONE ENV PLUGIN, BOTH DOORS, ONE TABLE** — the `env` secret source's linked + dropped-in
-//! conformance on the secret kind's memory ABI (THE DESIGN §2 "Each plugin tests itself", §11.4),
-//! run against the busbar rev this repo pins (`.busbar-ref`).
-//!
-//! The plugin is held two ways at once: LINKED (the logic crate's `door::door`, through the
-//! loader's `load_linked`) and DROPPED IN (this crate's built cdylib, `dlopen`ed by the loader's
-//! `load_dropped`, which resolves `busbar_plugin_door` and validates the door). Each is bound to a
-//! real dispatcher and driven over the same script through the secret kind's table: `validate`,
-//! `open`, `resolve` over a set, an unset, an empty and a malformed reference, `release` of the
-//! granted lease and of one never granted, `refresh`, `tick`, `close`. The two transcripts must be
-//! equal, and the resolved value is read out of the lease the READY answer names.
-//!
-//! The dropped-in door is admitted against the Statement rendering `busbar-plugin-pack` signs into
-//! its manifest (`rendering_of_library`, read off the built cdylib); the linked row states its own
-//! (`LinkedRow::of`). The two renderings must be equal byte for byte.
-//!
-//! THE RED ARMS, same file: the door asked for as another kind is refused; a manifest stating
-//! another kind, or 1.5.5's secret ABI version, is refused before `dlopen` (ABI-b6: a 1.5.5 secret
-//! plugin is refused naming the rebuild). A missing cdylib PANICS — this test IS the dropped-in
-//! door's proof, and never skips.
+//! conformance on the secret kind's memory ABI, run against the busbar rev in `.busbar-ref`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,36 +13,42 @@ use busbar_contract::abi::mechanism::lifecycle::{
     slot as lc, OpenIn, OpenOut, RefreshIn, ReleaseIn, TickIn, TickOut, ValidateIn,
 };
 use busbar_contract::abi::mechanism::rendering::RENDERING_MAGIC;
-use busbar_contract::abi::mechanism::{KindCode, MECHANISM_VERSION};
+use busbar_contract::abi::mechanism::MECHANISM_VERSION;
 use busbar_contract::abi::secret::{self, ResolveIn, ResolveOut};
-use busbar_plugin_loader::dispatch::kinds::export::Export;
 use busbar_plugin_loader::dispatch::kinds::secret::Secret;
 use busbar_plugin_loader::dispatch::{
     in_head, load_dropped, load_linked, out_head, rendering_of_library, Bind, Called,
-    DispatchConfig, Dispatcher, Frame, LinkedRow, LoadError, NoSink, Plugin, NO_BLOB,
+    DispatchConfig, Dispatcher, Frame, LinkedRow, LoadError, Plugin, NO_BLOB,
 };
 
-/// The value the set variable holds; the transcript carries it only as the resolved material.
+/// The value the set variable holds; the transcript carries it only as the resolved material. The
+/// variables are set once for the process before any door reads one.
 const VALUE: &str = "s3cr3t-env-conformance";
 const SET: &str = "BUSBAR_SECRET_ENV_CONFORMANCE_SET";
 const EMPTY: &str = "BUSBAR_SECRET_ENV_CONFORMANCE_EMPTY";
 const UNSET: &str = "BUSBAR_SECRET_ENV_CONFORMANCE_UNSET";
 
-/// This crate's built cdylib (uplifted or under `deps`, newest wins). A missing artifact is a
-/// failure, never a skip.
+/// Use the same explicit artifact selection as the shared linked/dropped suite.
 fn cdylib() -> PathBuf {
-    let exe = std::env::current_exe().expect("the test binary has a path");
-    let profile = exe
-        .parent()
-        .and_then(|d| d.parent())
-        .expect("target/<profile>");
-    let file = busbar_plugin_loader::plugin_library_filename("busbar_secret_env_plugin");
-    [profile.join(&file), profile.join("deps").join(&file)]
-        .into_iter()
-        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
-        .max()
-        .map(|(_, p)| p)
-        .unwrap_or_else(|| panic!("the busbar-secret-env-plugin cdylib ({file}) is not built"))
+    let path = PathBuf::from(
+        std::env::var_os("BUSBAR_PLUGIN_CDYLIB")
+            .expect("build the dropped-in plugin freshly and set BUSBAR_PLUGIN_CDYLIB"),
+    );
+    assert!(
+        path.is_absolute() && path.is_file(),
+        "expected an absolute path to the freshly built cdylib: {path:?}"
+    );
+    path
+}
+
+// Environment is established once before any plugin is dispatched; every test uses the same values.
+fn prepare_environment() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        std::env::set_var(SET, VALUE);
+        std::env::set_var(EMPTY, "");
+        std::env::remove_var(UNSET);
+    });
 }
 
 /// The Statement rendering the signed manifest states for the dropped-in image.
@@ -88,13 +76,44 @@ fn dispatcher() -> Arc<Dispatcher> {
     }))
 }
 
+// Capture the public envelope boundary, including plugin log records, independently of kit
+// canary globals. Every production bind in this test binary uses this sink.
+#[derive(Default)]
+struct AuditSink(std::sync::Mutex<Vec<Vec<u8>>>);
+impl AuditSink {
+    fn hear(&self, bytes: &[u8]) {
+        assert!(
+            !bytes
+                .windows(VALUE.len())
+                .any(|part| part == VALUE.as_bytes()),
+            "a configured credential crossed the envelope boundary"
+        );
+        self.0
+            .lock()
+            .expect("envelope audit lock")
+            .push(bytes.to_vec());
+    }
+}
+impl busbar_plugin_loader::dispatch::EnvelopeSink for AuditSink {
+    fn metric(&self, metric: busbar_plugin_loader::dispatch::Metric<'_>) {
+        for label in metric.labels {
+            self.hear(label);
+        }
+    }
+    fn diag(&self, diagnostic: busbar_plugin_loader::dispatch::Diagnostic<'_>) {
+        self.hear(diagnostic.name);
+        self.hear(diagnostic.text);
+    }
+    fn dropped(&self, _: busbar_plugin_loader::dispatch::Dropped) {}
+}
+
 fn bind(d: &Dispatcher) -> Bind {
     Bind {
         instance: Arc::from("env"),
         max_inflight_cap: 64,
-        sink: Arc::new(NoSink),
+        sink: Arc::new(AuditSink::default()),
         dispatcher: d.adopter(),
-        conns: None,
+        conns: busbar_plugin_loader::dispatch::ConnTable::NoNeeds,
     }
 }
 
@@ -122,7 +141,45 @@ fn spelled(c: &Called) -> String {
         .as_deref()
         .map(String::from_utf8_lossy)
         .unwrap_or_default();
+    assert!(
+        !text.contains(VALUE),
+        "an error exposed a fixture credential"
+    );
     format!("{:?} lease={} {text}", c.outcome, c.lease != 0)
+}
+
+fn crossings(p: &Plugin<Secret>) -> (u64, u64) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let total = p.inner.crossings.load(SeqCst);
+    let resumes = p.inner.resumes.load(SeqCst);
+    (total - resumes, resumes)
+}
+
+fn expect_crossings(p: &Plugin<Secret>, before: (u64, u64), expected: u64) {
+    let after = crossings(p);
+    assert_eq!(
+        after.0 - before.0,
+        expected,
+        "exact actual first-entry crossings"
+    );
+    assert_eq!(after.1 - before.1, 0, "env never pends or resumes");
+}
+
+fn counted_call<
+    I: busbar_plugin_loader::dispatch::InFrame,
+    O: busbar_plugin_loader::dispatch::OutFrame,
+>(
+    p: &Plugin<Secret>,
+    slot: u32,
+    frame: &mut Frame<I, O>,
+) -> Called {
+    use busbar_contract::abi::mechanism::call::Outcome;
+    let before = crossings(p);
+    let answer = p.call(slot, frame);
+    let host_refusal = (slot == lc::OPEN || slot == secret::slot::RESOLVE)
+        && matches!(answer.outcome, Outcome::Refused | Outcome::Fault);
+    expect_crossings(p, before, u64::from(!host_refusal));
+    answer
 }
 
 fn validate(p: &Plugin<Secret>, settings: &str) -> String {
@@ -135,15 +192,19 @@ fn validate(p: &Plugin<Secret>, settings: &str) -> String {
         },
         out_head(),
     );
-    spelled(&p.call(lc::VALIDATE, &mut f))
+    spelled(&counted_call(p, lc::VALIDATE, &mut f))
 }
 
 fn open(p: &Plugin<Secret>) -> String {
+    open_with(p, NO_BLOB)
+}
+
+fn open_with(p: &Plugin<Secret>, settings: Blob) -> String {
     let mut f = Frame::new(
         OpenIn {
             head: in_head(),
             host: std::ptr::null(),
-            settings: NO_BLOB,
+            settings,
             secrets: std::ptr::null(),
             secrets_len: 0,
             generation: 1,
@@ -156,58 +217,95 @@ fn open(p: &Plugin<Secret>) -> String {
             err_len: 0,
         },
     );
-    spelled(&p.call(lc::OPEN, &mut f))
+    spelled(&counted_call(p, lc::OPEN, &mut f))
 }
 
 fn refresh(p: &Plugin<Secret>) -> String {
+    refresh_with(p, NO_BLOB)
+}
+
+fn refresh_with(p: &Plugin<Secret>, settings: Blob) -> String {
     let mut f = Frame::new(
         RefreshIn {
             head: in_head(),
             generation: 2,
-            settings: NO_BLOB,
+            settings,
             secrets: std::ptr::null(),
             secrets_len: 0,
         },
         out_head(),
     );
-    spelled(&p.call(lc::REFRESH, &mut f))
+    spelled(&counted_call(p, lc::REFRESH, &mut f))
 }
 
-/// One resolve: its answer, its error kind, the material it leased (read out of the lease), and
-/// the lease released.
-fn resolve(p: &Plugin<Secret>, settings: &str) -> String {
+/// One resolve into a zeroed host buffer of `cap` bytes: its answer, its error kind, the material
+/// it wrote into the host's buffer, and the `needed` a short answer states.
+fn resolve_into(p: &Plugin<Secret>, settings: &str, cap: usize) -> String {
+    let mut buf = vec![0_u8; cap];
     let mut f = Frame::new(
         ResolveIn {
             head: in_head(),
             settings: json(settings.as_bytes()),
+            secret_buf: buf.as_mut_ptr(),
+            secret_cap: buf.len(),
         },
         ResolveOut {
             head: out_head(),
             secret: NO_BLOB,
             error_kind: 0,
             _reserved: 0,
+            needed: 0,
         },
     );
-    let c = p.call(secret::slot::RESOLVE, &mut f);
+    let c = counted_call(p, secret::slot::RESOLVE, &mut f);
     let blob = f.out.secret;
+    assert_eq!(c.lease, 0, "environment resolution never grants a lease");
+    assert_eq!(
+        blob.flags & busbar_contract::abi::mechanism::call::BLOB_SECRET != 0,
+        c.outcome == busbar_contract::abi::mechanism::call::Outcome::Ready,
+        "only a successful resolution flags secret material"
+    );
+    if c.outcome != busbar_contract::abi::mechanism::call::Outcome::Ready {
+        assert!(
+            blob.ptr.is_null() && blob.len == 0,
+            "a refusal returned material"
+        );
+        assert!(
+            buf.iter().all(|byte| *byte == 0),
+            "a refusal wrote secret bytes into the host buffer"
+        );
+    }
     let material = if blob.ptr.is_null() || blob.len == 0 {
         String::new()
     } else {
-        // SAFETY: a READY resolve's `secret` names plugin memory held under the answer's lease
-        // until `release`, which runs below, after this copy.
-        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(blob.ptr, blob.len) })
-            .into_owned()
+        assert_eq!(
+            blob.ptr,
+            buf.as_ptr(),
+            "a READY value is in the host's buffer"
+        );
+        String::from_utf8_lossy(&buf[..blob.len]).into_owned()
     };
-    let released = if c.lease == 0 {
+    let used = if blob.ptr.is_null() { 0 } else { blob.len };
+    assert!(
+        buf[used..].iter().all(|b| *b == 0),
+        "no secret bytes outside the answered blob"
+    );
+    buf.fill(0);
+    let needed = if f.out.needed == 0 {
         String::new()
     } else {
-        format!(" released={}", release(p, c.lease))
+        format!(" needed={}", f.out.needed)
     };
     format!(
-        "{} kind={} material={material:?}{released}",
+        "{} kind={} material={material:?}{needed}",
         spelled(&c),
         f.out.error_kind
     )
+}
+
+/// [`resolve_into`] the host's first buffer.
+fn resolve(p: &Plugin<Secret>, settings: &str) -> String {
+    resolve_into(p, settings, secret::FIRST_SECRET_CAP)
 }
 
 fn release(p: &Plugin<Secret>, lease: u64) -> String {
@@ -218,7 +316,7 @@ fn release(p: &Plugin<Secret>, lease: u64) -> String {
         },
         out_head(),
     );
-    spelled(&p.call(lc::RELEASE, &mut f))
+    spelled(&counted_call(p, lc::RELEASE, &mut f))
 }
 
 fn tick(p: &Plugin<Secret>) -> String {
@@ -232,18 +330,30 @@ fn tick(p: &Plugin<Secret>) -> String {
             next_tick_ns: 7,
         },
     );
-    let c = p.call(lc::TICK, &mut f);
+    let c = counted_call(p, lc::TICK, &mut f);
     format!("{} next={}", spelled(&c), f.out.next_tick_ns)
 }
 
 fn close(p: &Plugin<Secret>) -> String {
     let mut f: Frame<InHead, OutHead> = Frame::new(in_head(), out_head());
-    spelled(&p.call(lc::CLOSE, &mut f))
+    spelled(&counted_call(p, lc::CLOSE, &mut f))
 }
 
 /// What one door does, as one comparable transcript.
 fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
-    let validated = [validate(p, ""), validate(p, "{}"), validate(p, "[1]")];
+    let before_facts = crossings(p);
+    let facts = (
+        p.name().to_owned(),
+        format!("{:?}", p.kind()),
+        p.max_inflight(),
+    );
+    expect_crossings(p, before_facts, 0);
+    let validated = [
+        validate(p, ""),
+        validate(p, "{}"),
+        validate(p, "[1]"),
+        validate(p, r#"{"key":"X"}"#),
+    ];
     let unopened = resolve(p, &format!(r#"{{"key":"{SET}"}}"#));
     let (opened, opened_again) = (open(p), open(p));
     let resolved: Vec<String> = [
@@ -252,20 +362,25 @@ fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
         format!(r#"{{"key":"{EMPTY}"}}"#),
         r#"{"key":"  "}"#.to_string(),
         "[1]".to_string(),
+        format!(r#"{{"key":"{SET}","path":"/x"}}"#),
     ]
     .iter()
     .map(|s| resolve(p, s))
     .collect();
+
+    let short = resolve_into(p, &format!(r#"{{"key":"{SET}"}}"#), VALUE.len() - 1);
     serde_json::json!({
-        "name": p.name(),
-        "kind": format!("{:?}", p.kind()),
-        "max_inflight": p.max_inflight(),
+        "name": facts.0,
+        "kind": facts.1,
+        "max_inflight": facts.2,
         "validate": validated,
         "resolve_unopened": unopened,
         "open": opened,
         "open_again": opened_again,
         "resolve": resolved,
+        "resolve_short": short,
         "release_unknown": release(p, 42),
+        "refresh_refused": refresh_with(p, json(br#"{"key":"X"}"#)),
         "refresh": refresh(p),
         "tick": tick(p),
         "close": close(p),
@@ -275,9 +390,8 @@ fn transcript(p: &Plugin<Secret>) -> serde_json::Value {
 /// The plugin answers as ONE plugin through either door, with 1.5.5's refusal texts.
 #[test]
 fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
-    std::env::set_var(SET, VALUE);
-    std::env::set_var(EMPTY, "");
-    std::env::remove_var(UNSET);
+    prepare_environment();
+    assert_eq!(std::env::var(SET).as_deref(), Ok(VALUE));
     assert_eq!(
         LinkedRow::of(busbar_secret_env::door::door)
             .expect("the linked row states")
@@ -298,10 +412,25 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
             (
                 busbar_contract::abi::mechanism::door::REWRITE_SUGAR,
                 "env".to_string(),
-                String::new()
+                "key".to_string()
+            ),
+            (
+                busbar_contract::abi::mechanism::door::REWRITE_SUGAR_SHOWN,
+                "env".to_string(),
+                "VAR".to_string()
+            ),
+            (
+                busbar_contract::abi::mechanism::door::REWRITE_SUGAR_NAMES,
+                "env".to_string(),
+                "the environment variable name".to_string()
+            ),
+            (
+                busbar_contract::abi::mechanism::door::REWRITE_SUGAR_ROLE,
+                "env".to_string(),
+                "fill".to_string()
             ),
         ],
-        "the Statement names the source by its module alias and its reference sugar"
+        "the Statement names the source by its module alias and its reference sugar, the settings key that sugar's value lands under, what a refusal says it names and its role"
     );
     let d = dispatcher();
     let linked = transcript(&linked(&d));
@@ -317,6 +446,7 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
             "Ready lease=false ",
             "Ready lease=false ",
             "Failed lease=false settings: must be a JSON object",
+            "Failed lease=false secret module 'env' takes no settings; remove settings.key (each reference names its variable in its own settings.key)",
         ])
     );
     assert!(
@@ -343,63 +473,529 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
     assert_eq!(
         resolved,
         serde_json::json!([
-            format!("Ready lease=true  kind=0 material={VALUE:?} released=Ready lease=false "),
+            format!("Ready lease=false  kind=0 material={VALUE:?}"),
             format!("Failed lease=false secret env:{UNSET} cannot resolve: environment variable '{UNSET}' is unset kind=1 material=\"\""),
             format!("Failed lease=false secret env:{EMPTY} resolved to an EMPTY value; a secret must be non-empty (fail-closed) kind=4 material=\"\""),
             "Failed lease=false secret module 'env' requires settings.key naming the environment variable (e.g. `{ env: MY_VAR }` or `{ module: env, settings: { key: MY_VAR } }`) kind=4 material=\"\"",
             "NOT-AN-OBJECT",
+            "Failed lease=false secret module 'env' does not take settings.path; a reference names only settings.key (fail-closed) kind=4 material=\"\"",
         ])
     );
-    assert_eq!(linked["release_unknown"], "Refused lease=false ");
+    assert_eq!(
+        linked["resolve_short"],
+        format!(
+            "Failed lease=false  kind=0 material=\"\" needed={}",
+            VALUE.len()
+        ),
+        "a value over the host's buffer is the short-buffer answer"
+    );
+    assert_eq!(
+        linked["release_unknown"],
+        format!(
+            "Refused lease=false {}",
+            busbar_contract::abi::sdk::life::NO_SUCH_LEASE
+        ),
+        "a release of a lease the instance does not hold is refused naming why (the SDK's)"
+    );
+    assert_eq!(
+        linked["refresh_refused"],
+        "Failed lease=false secret module 'env' takes no settings; remove settings.key (each reference names its variable in its own settings.key)",
+        "refresh refuses what validate refuses"
+    );
     assert_eq!(linked["refresh"], "Ready lease=false ");
     assert_eq!(linked["tick"], "Ready lease=false  next=0");
     assert_eq!(linked["close"], "Ready lease=false ");
 }
 
-/// RED: the door asked for as another kind is refused, by either origin.
 #[test]
-fn a_wrong_kind_is_refused() {
+fn a_manifest_stating_another_mechanism_is_refused() {
     let d = dispatcher();
-    let row = LinkedRow::of(busbar_secret_env::door::door).expect("the linked row states");
-    let err =
-        load_linked::<Export>(&row, bind(&d)).expect_err("a secret door is not an export door");
-    let said = format!("{err:?}");
-    assert!(said.contains("Secret") || said.contains("Kind"), "{said}");
-
-    let as_export = stating(&[
-        (1, KindCode::Export as u32),
-        (2, busbar_contract::abi::export::ABI_VERSION),
-    ]);
-    let err = load_dropped::<Export>(&cdylib(), &as_export, bind(&d))
-        .expect_err("the dropped-in secret door is not an export door");
-    assert!(!matches!(err, LoadError::ManifestKind { .. }), "{err:?}");
-}
-
-/// RED: a manifest whose statement disagrees with what is asked is refused before `dlopen`; one
-/// stating 1.5.5's secret ABI (v1) is refused (ABI-b6).
-#[test]
-fn a_statement_mismatch_is_refused() {
-    let d = dispatcher();
-    let err = load_dropped::<Secret>(
-        &cdylib(),
-        &stating(&[(1, KindCode::Export as u32)]),
-        bind(&d),
-    )
-    .expect_err("a manifest stating another kind is refused");
-    assert!(matches!(err, LoadError::ManifestKind { .. }), "{err:?}");
-
-    let err = load_dropped::<Secret>(
-        &cdylib(),
-        &stating(&[(2, secret::ABI_VERSION - 1)]),
-        bind(&d),
-    )
-    .expect_err("a manifest stating 1.5.5's secret ABI is refused");
-    assert!(matches!(err, LoadError::ManifestKindAbi { .. }), "{err:?}");
-
     let err = load_dropped::<Secret>(&cdylib(), &stating(&[(0, MECHANISM_VERSION + 1)]), bind(&d))
         .expect_err("a manifest stating another mechanism is refused");
     assert!(
         matches!(err, LoadError::ManifestMechanism { .. }),
         "{err:?}"
     );
+}
+
+#[test]
+fn reference_check_is_pure_and_refuses_bad_settings_through_both_doors() {
+    use busbar_contract::abi::mechanism::call::Outcome;
+    use busbar_contract::abi::secret::CheckIn;
+
+    let missing = format!("BUSBAR_SECRET_ENV_CHECK_UNSET_{}", std::process::id());
+    assert!(std::env::var_os(&missing).is_none());
+    let valid = serde_json::json!({"key": missing}).to_string();
+    let d = dispatcher();
+    for p in [linked(&d), dropped(&d)] {
+        for (settings, expected, reason) in [
+            (valid.as_str(), Outcome::Ready, ""),
+            ("{}", Outcome::Failed, "requires settings.key"),
+            (r#"{"key":"  "}"#, Outcome::Failed, "requires settings.key"),
+            (r#"{"key":7}"#, Outcome::Failed, "requires settings.key"),
+            ("[1]", Outcome::Failed, "not a JSON object"),
+            (
+                r#"{"key":"X","path":"/x"}"#,
+                Outcome::Failed,
+                "does not take settings.path",
+            ),
+        ] {
+            let mut reason_buf = [0_u8; 1024];
+            let mut frame: Frame<CheckIn, OutHead> = Frame::new(
+                CheckIn {
+                    head: in_head(),
+                    settings: json(settings.as_bytes()),
+                    err_buf: reason_buf.as_mut_ptr(),
+                    err_cap: reason_buf.len(),
+                },
+                out_head(),
+            );
+            let called = counted_call(&p, secret::slot::CHECK, &mut frame);
+            assert_eq!(called.outcome, expected, "{settings}");
+            assert_eq!(called.lease, 0);
+            if expected == Outcome::Failed {
+                let text = std::str::from_utf8(called.error.as_deref().expect("a reason"))
+                    .expect("UTF-8 reason");
+                assert!(text.contains(reason), "{text}");
+                assert_eq!(frame.out.error.ptr, reason_buf.as_ptr());
+                assert_eq!(&reason_buf[..frame.out.error.len], text.as_bytes());
+            } else {
+                assert!(called.error.as_deref().unwrap_or_default().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn invalid_instance_settings_refuse_open_without_installing_an_instance() {
+    prepare_environment();
+    let d = dispatcher();
+    for p in [linked(&d), dropped(&d)] {
+        assert_eq!(
+            open_with(&p, json(br#"{"key":"X"}"#)),
+            "Failed lease=false secret module 'env' takes no settings; remove settings.key (each reference names its variable in its own settings.key)"
+        );
+        assert_eq!(
+            open_with(&p, json(b"[1]")),
+            "Failed lease=false settings: must be a JSON object"
+        );
+        assert_eq!(open(&p), "Ready lease=false ");
+        let resolved = resolve(&p, &format!(r#"{{"key":"{SET}"}}"#));
+        assert!(
+            resolved.contains(VALUE),
+            "a valid open still resolves after refused opens: {resolved}"
+        );
+        assert_eq!(close(&p), "Ready lease=false ");
+    }
+}
+
+#[test]
+fn repeated_resolution_and_refresh_keep_material_until_close() {
+    prepare_environment();
+    let d = dispatcher();
+    for p in [linked(&d), dropped(&d)] {
+        assert_eq!(open(&p), "Ready lease=false ");
+        let reference = format!(r#"{{"key":"{SET}"}}"#);
+        let expected = format!("Ready lease=false  kind=0 material={VALUE:?}");
+        assert_eq!(resolve(&p, &reference), expected);
+        assert_eq!(resolve(&p, &reference), expected);
+        assert!(refresh_with(&p, json(b"[1]")).starts_with("Failed lease=false "));
+        assert_eq!(resolve(&p, &reference), expected);
+        assert_eq!(refresh(&p), "Ready lease=false ");
+        assert_eq!(resolve(&p, &reference), expected);
+        assert!(resolve(&p, r#"{"name":5}"#).ends_with("kind=4 material=\"\""));
+        assert_eq!(close(&p), "Ready lease=false ");
+        assert!(!resolve(&p, &reference).starts_with("Ready"));
+    }
+}
+
+#[test]
+fn mismatched_statements_are_refused_through_both_doors() {
+    let d = dispatcher();
+    let mut row = LinkedRow::of(busbar_secret_env::door::door).expect("the actual row states");
+    row.statement = different_valid_statement(&row.statement);
+    assert_eq!(
+        load_linked::<Secret>(&row, bind(&d)).map(|_| ()).err(),
+        Some(LoadError::StatementMismatch)
+    );
+    assert_eq!(
+        load_dropped::<Secret>(&cdylib(), &row.statement, bind(&d))
+            .map(|_| ())
+            .err(),
+        Some(LoadError::StatementMismatch)
+    );
+    // The honest twins must still load.
+    let _ = linked(&d);
+    let _ = dropped(&d);
+}
+
+#[test]
+fn ordinary_checks_run_in_the_requested_profile() {
+    assert!(
+        !(cfg!(debug_assertions) && std::env::var_os("BUSBAR_EXPECT_RELEASE").is_some()),
+        "BUSBAR_EXPECT_RELEASE requires cargo test --release"
+    );
+}
+
+#[test]
+fn both_statements_agree_with_the_empty_declared_needs() {
+    let declared = busbar_plugin_loader::sign::Declares::from_declares_json(
+        busbar_secret_env::DECLARES.as_bytes(),
+    )
+    .expect("the actual declares document reads");
+    assert_eq!(declared, Default::default());
+    let row = LinkedRow::of(busbar_secret_env::door::door).expect("the actual row states");
+    for statement in [row.statement, stated()] {
+        let read = busbar_contract::abi::mechanism::rendering::read(&statement)
+            .unwrap_or_else(|e| panic!("invalid Statement at {}: {}", e.at, e.what));
+        assert!(read.needs.is_empty(), "env declares no connection needs");
+    }
+}
+
+#[test]
+fn ticketed_resolves_preserve_material_flags_buffers_and_refusals() {
+    use busbar_contract::abi::mechanism::call::{DeadlineClass, Outcome, BLOB_SECRET};
+    struct Lending {
+        settings: Vec<u8>,
+        material: std::sync::Mutex<Vec<u8>>,
+    }
+    prepare_environment();
+    let d = dispatcher();
+    for p in [linked(&d), dropped(&d)] {
+        let before_ready = crossings(&p);
+        p.ready(&d, Duration::from_secs(30))
+            .expect("the actual env door is ready");
+        expect_crossings(&p, before_ready, u64::from(p.has_ready()));
+        assert_eq!(open(&p), "Ready lease=false ");
+        for (reference, cap, expected, kind, needed) in [
+            (
+                format!(r#"{{"key":"{SET}"}}"#),
+                VALUE.len(),
+                Outcome::Ready,
+                0,
+                0,
+            ),
+            (
+                format!(r#"{{"key":"{SET}"}}"#),
+                VALUE.len() - 1,
+                Outcome::Failed,
+                0,
+                VALUE.len() as u64,
+            ),
+            (
+                format!(r#"{{"key":"{UNSET}"}}"#),
+                128,
+                Outcome::Failed,
+                secret::ERROR_KIND_NOT_FOUND,
+                0,
+            ),
+            (
+                "[1]".to_owned(),
+                128,
+                Outcome::Failed,
+                secret::ERROR_KIND_INVALID,
+                0,
+            ),
+            (
+                r#"{"name":5}"#.to_owned(),
+                128,
+                Outcome::Failed,
+                secret::ERROR_KIND_INVALID,
+                0,
+            ),
+        ] {
+            let lent = Arc::new(Lending {
+                settings: reference.into_bytes(),
+                material: std::sync::Mutex::new(vec![0; cap]),
+            });
+            let buffer = lent.material.lock().unwrap().as_mut_ptr();
+            let frame = Frame::new(
+                ResolveIn {
+                    head: in_head(),
+                    settings: json(&lent.settings),
+                    secret_buf: buffer,
+                    secret_cap: cap,
+                },
+                ResolveOut {
+                    head: out_head(),
+                    secret: NO_BLOB,
+                    error_kind: 0,
+                    _reserved: 0,
+                    needed: 0,
+                },
+            );
+            let before_resolve = crossings(&p);
+            let ticket = d.mint(0).expect("an actual resolve ticket");
+            let done = d
+                .submit_lent(
+                    &p,
+                    ticket,
+                    secret::slot::RESOLVE,
+                    frame,
+                    DeadlineClass::Call,
+                    busbar_plugin_loader::dispatch::now_ns().saturating_add(30_000_000_000),
+                    Arc::clone(&lent) as busbar_plugin_loader::dispatch::Lent,
+                )
+                .wait_done();
+            d.recycle(ticket);
+            expect_crossings(&p, before_resolve, 1);
+            assert_eq!(done.outcome, expected);
+            assert_eq!(done.lease, 0);
+            let called = Called {
+                outcome: done.outcome,
+                error: done.error,
+                lease: done.lease,
+                recall: None,
+            };
+            let _ = spelled(&called);
+            let frame = done.frame.expect("ticket returns the actual frame");
+            assert_eq!(frame.out.error_kind, kind);
+            assert_eq!(frame.out.needed, needed);
+            let mut material = lent.material.lock().unwrap();
+            if expected == Outcome::Ready {
+                assert_eq!(frame.out.secret.ptr, buffer.cast_const());
+                assert_eq!(frame.out.secret.len, VALUE.len());
+                assert_eq!(&material[..], VALUE.as_bytes());
+                assert_ne!(frame.out.secret.flags & BLOB_SECRET, 0);
+            } else {
+                assert!(frame.out.secret.ptr.is_null());
+                assert_eq!(frame.out.secret.len, 0);
+                assert_eq!(frame.out.secret.flags & BLOB_SECRET, 0);
+                assert!(material.iter().all(|byte| *byte == 0));
+            }
+            material.fill(0);
+        }
+        assert_eq!(close(&p), "Ready lease=false ");
+    }
+    assert_eq!(d.stats().deadline_without_wake, 0);
+}
+
+#[test]
+fn the_actual_dropped_image_is_distinct_from_the_linked_image() {
+    let path = cdylib();
+    let (dropped_door, dropped_ops) =
+        busbar_plugin_loader::dispatch::load::door_addresses_of_library(&path)
+            .expect("the actual dropped image loads")
+            .expect("the image exports its actual door");
+    let linked = busbar_secret_env::door::door();
+    assert_ne!(
+        dropped_door,
+        std::ptr::from_ref(linked) as usize,
+        "different physical doors"
+    );
+    assert_ne!(
+        dropped_ops,
+        linked.parts().ops as usize,
+        "different physical operation tables"
+    );
+}
+
+fn different_valid_statement(statement: &[u8]) -> Vec<u8> {
+    let version = busbar_contract::abi::mechanism::rendering::read(statement)
+        .unwrap()
+        .version;
+    assert!(!version.is_empty());
+    let at = statement
+        .windows(version.len())
+        .position(|bytes| bytes == version.as_bytes())
+        .expect("the actual version is present in its rendering");
+    let mut changed = statement.to_vec();
+    changed[at] = if changed[at] == b'9' { b'8' } else { b'9' };
+    busbar_contract::abi::mechanism::rendering::read(&changed)
+        .expect("a changed version remains a valid Statement rendering");
+    changed
+}
+
+// These negative inputs retain this product's actual Statement and operation table. Only the
+// numerical ABI/layout declaration or version string is changed; no plugin behavior is copied.
+extern "C" fn metadata_door<const CASE: usize>(
+) -> *const busbar_contract::abi::mechanism::door::Door {
+    use busbar_contract::abi::mechanism::door::{Door, Statement};
+    static DOORS: [std::sync::OnceLock<usize>; 5] = [const { std::sync::OnceLock::new() }; 5];
+    *DOORS[CASE].get_or_init(|| {
+        let mut parts = busbar_secret_env::door::door().parts();
+        let kind = busbar_contract::abi::mechanism::KindCode::Secret;
+        match CASE {
+            0 => parts.kind_abi = kind.abi_version() + 1,
+            1 => parts.kind_abi = kind.abi_version().wrapping_sub(1),
+            2 => parts.layout = kind.layout_fingerprint() ^ 1,
+            3 => parts.layout = 0,
+            4 => {
+                // SAFETY: the actual product's immutable Statement and all nested ranges are static.
+                let statement = unsafe { parts.statement.read_unaligned() };
+                const OTHER: &str = "0.0.0-conformance-restated";
+                parts.statement = Box::leak(Box::new(Statement {
+                    version: busbar_contract::abi::mechanism::call::AbiStr {
+                        ptr: OTHER.as_ptr(),
+                        len: OTHER.len(),
+                    },
+                    ..statement
+                }));
+            }
+            _ => unreachable!(),
+        }
+        // SAFETY: the actual product's full table and nested Statement ranges remain immutable
+        // and static. Changed metadata is deliberately invalid and judged before any operation.
+        let door = unsafe { Door::__from_parts(parts) };
+        Box::into_raw(Box::new(door)) as usize
+    }) as *const Door
+}
+
+fn metadata_image() -> std::path::PathBuf {
+    let image = std::path::PathBuf::from(
+        std::env::var_os("BUSBAR_PLUGIN_CDYLIB")
+            .expect("BUSBAR_PLUGIN_CDYLIB must name the freshly built actual image"),
+    );
+    assert!(image.is_absolute() && image.is_file());
+    image
+}
+
+#[test]
+fn the_actual_kind_abi_is_checked_by_pack_linked_and_dropped_origins() {
+    use busbar_contract::abi::sdk::door::RawDoorFn;
+    use busbar_plugin_loader::dispatch::LoadError;
+    let kind = busbar_contract::abi::mechanism::KindCode::Secret;
+    let host = kind.abi_version();
+    assert_eq!(busbar_secret_env::door::door().parts().kind_abi, host);
+    let d = Dispatcher::new(Default::default());
+    let honest = LinkedRow::of(busbar_secret_env::door::door).expect("actual Statement");
+    let _ = load_linked::<Secret>(&honest, bind(&d)).expect("honest linked twin");
+    let _ = load_dropped::<Secret>(&metadata_image(), &honest.statement, bind(&d))
+        .expect("honest dropped twin");
+    for (door, abi) in [
+        (metadata_door::<0> as RawDoorFn, host + 1),
+        (metadata_door::<1>, host.wrapping_sub(1)),
+    ] {
+        let want = LoadError::KindAbi {
+            kind,
+            door: abi,
+            host,
+        };
+        let packed = busbar_plugin_loader::dispatch::load::rendering_of_raw(door)
+            .expect_err("pack refuses another ABI");
+        assert_eq!(packed, want);
+        let linked = LinkedRow::of_raw(door)
+            .and_then(|row| load_linked::<Secret>(&row, bind(&d)).map(|_| ()))
+            .expect_err("linked refuses another ABI");
+        assert_eq!(linked, want);
+        assert!(linked.to_string().contains("rebuild"));
+        let mut statement = honest.statement.clone();
+        let at = busbar_contract::abi::mechanism::rendering::RENDERING_MAGIC.len() + 8;
+        statement[at..at + 4].copy_from_slice(&abi.to_le_bytes());
+        assert_eq!(
+            load_dropped::<Secret>(&metadata_image(), &statement, bind(&d))
+                .map(|_| ())
+                .err(),
+            Some(LoadError::ManifestKindAbi { stated: abi, host })
+        );
+    }
+}
+
+#[test]
+fn the_actual_kind_layout_is_checked_under_honest_and_own_rows() {
+    use busbar_contract::abi::sdk::door::RawDoorFn;
+    use busbar_plugin_loader::dispatch::LoadError;
+    let kind = busbar_contract::abi::mechanism::KindCode::Secret;
+    let host = kind.layout_fingerprint();
+    assert_eq!(busbar_secret_env::door::door().parts().layout, host);
+    let d = Dispatcher::new(Default::default());
+    let honest = LinkedRow::of(busbar_secret_env::door::door).unwrap();
+    let _ = load_linked::<Secret>(&honest, bind(&d)).unwrap();
+    let _ = load_dropped::<Secret>(&metadata_image(), &honest.statement, bind(&d)).unwrap();
+    for (door, stated) in [
+        (metadata_door::<2> as RawDoorFn, host ^ 1),
+        (metadata_door::<3>, 0),
+    ] {
+        let refusal = busbar_plugin_loader::dispatch::load::rendering_of_raw(door)
+            .expect_err("pack refuses incompatible layout");
+        let LoadError::KindLayout {
+            kind: named,
+            stated: said,
+            host: read,
+            ..
+        } = &refusal
+        else {
+            panic!("{refusal:?}")
+        };
+        assert_eq!((*named, *said, *read), (kind, stated, host));
+        assert!(refusal
+            .to_string()
+            .contains("rebuild against this busbar-contract"));
+        let row = LinkedRow {
+            statement: honest.statement.clone(),
+            door,
+        };
+        assert_eq!(
+            load_linked::<Secret>(&row, bind(&d)).map(|_| ()).err(),
+            Some(refusal.clone())
+        );
+        assert_eq!(
+            LinkedRow::of_raw(door)
+                .and_then(|row| load_linked::<Secret>(&row, bind(&d)).map(|_| ()))
+                .err(),
+            Some(refusal)
+        );
+    }
+}
+
+#[test]
+fn the_actual_statement_matches_each_row_manifest_and_restated_version() {
+    use busbar_plugin_loader::dispatch::LoadError;
+    let d = Dispatcher::new(Default::default());
+    let honest = LinkedRow::of(busbar_secret_env::door::door).unwrap();
+    let _ = load_linked::<Secret>(&honest, bind(&d)).unwrap();
+    let _ = load_dropped::<Secret>(&metadata_image(), &honest.statement, bind(&d)).unwrap();
+    let changed = different_valid_statement(&honest.statement);
+    let row = LinkedRow {
+        statement: changed.clone(),
+        door: honest.door,
+    };
+    assert_eq!(
+        load_linked::<Secret>(&row, bind(&d)).map(|_| ()).err(),
+        Some(LoadError::StatementMismatch)
+    );
+    assert_eq!(
+        load_dropped::<Secret>(&metadata_image(), &changed, bind(&d))
+            .map(|_| ())
+            .err(),
+        Some(LoadError::StatementMismatch)
+    );
+    let row = LinkedRow {
+        statement: honest.statement,
+        door: metadata_door::<4>,
+    };
+    assert_eq!(
+        load_linked::<Secret>(&row, bind(&d)).map(|_| ()).err(),
+        Some(LoadError::StatementMismatch)
+    );
+}
+
+fn other_kind_is_refused<K: busbar_plugin_loader::dispatch::Kind>() {
+    use busbar_plugin_loader::dispatch::LoadError;
+    let d = Dispatcher::new(Default::default());
+    let row = LinkedRow::of(busbar_secret_env::door::door).unwrap();
+    let want = LoadError::ManifestKind {
+        stated: busbar_contract::abi::mechanism::KindCode::Secret,
+        want: K::CODE,
+    };
+    assert_eq!(
+        load_linked::<K>(&row, bind(&d)).map(|_| ()).err(),
+        Some(want.clone())
+    );
+    assert_eq!(
+        load_dropped::<K>(&metadata_image(), &row.statement, bind(&d))
+            .map(|_| ())
+            .err(),
+        Some(want)
+    );
+}
+
+#[test]
+fn the_actual_image_is_refused_as_every_other_kind_through_both_origins() {
+    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::auth::Auth>();
+    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::export::Export>();
+    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::hook::Hook>();
+    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::plane::Plane>();
+    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::store::Store>();
+    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::transport::Transport>();
 }
