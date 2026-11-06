@@ -7,7 +7,6 @@ First-party signed kind:secret plugin cdylib: the environment-variable secret so
 |---|---|---|---|---|
 | `secret` | `env` | `busbar-secret-env-plugin` | 1.6.0 (pinned in `.busbar-ref`) | Apache-2.0 |
 
-[![ci](https://github.com/GetBusbar/busbar-secret-env/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/GetBusbar/busbar-secret-env/actions/workflows/ci.yml)
 <!-- fleet:header:end -->
 
 ## What it is for
