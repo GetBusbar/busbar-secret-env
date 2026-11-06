@@ -1,5 +1,7 @@
 # Secret env ordinary assertion migration
 
+Historical record of the 1.6.0 assertion migration. The revisions and pending statements below are as of that migration; the current busbar pin is `.busbar-ref`, and the GitHub CI workflow it mentions has since been retired.
+
 Source freeze: plugin `80e13fcd3ac788f20d74abc46a231abed69c981c`, SDK and kit `a35493a5e74cc935ff7dcc15c1af869290da91cb`. No SDK or lock revision changes. No builds run: native execution belongs to the coordinated build lane.
 
 The published macro and kit dependency edges have been removed after preserving the product/origin assertions locally and obtaining common-loader source ownership ACK. Native qualification remains pending.
@@ -84,6 +86,6 @@ The three connection predicates have exact SOURCE_EQUIVALENCE_ACK in `A/diet-loa
 
 The moved-count RED comparator test is retired with its deleted comparator implementation; ordinary tests assert actual physical crossing/resume counts directly. Plane-only unreported classes/layout, transport-only frame-piece, outbound-auth-only three arms and store-only newer-schema branches executed no product assertions for this kind and are retired as such. No behavior failure or security oracle is silently retired.
 
-The pinned reusable CI workflow still contains historical kit-name/comparator requirements; root renderer owns replacement and canonical fresh artifact wiring before eventual SDK qualification. No public pin is changed here.
+At the time of the migration, the pinned reusable CI workflow still contained historical kit-name/comparator requirements; root renderer owned replacement and canonical fresh artifact wiring before eventual SDK qualification (that workflow has since been retired). No public pin is changed here.
 
 Native diagnostic refinement: the historical last-byte Statement mutation corrupts the actual rendering's trailing claims count and gets Rendering refusal before equality comparison. The ordinary mismatch tests now change one same-length actual version-string byte, first proving the mutated rendering still parses, then retaining the exact linked/dropped StatementMismatch and separately restated-version refusal. This repairs the negative input to reach its original equality oracle; it does not weaken the expected refusal.

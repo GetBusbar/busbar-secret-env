@@ -49,6 +49,19 @@ fn an_unset_variable_is_not_found_naming_it() {
     );
 }
 
+/// A multi-byte UTF-8 value is valid text: it resolves byte for byte, not refused as mis-encoded.
+#[test]
+fn a_non_ascii_utf8_value_resolves_byte_for_byte() {
+    let var = unique("NONASCII");
+    std::env::set_var(&var, "p\u{e4}ssw\u{f6}rd-\u{1f511}");
+    let resolved = resolve(&key(&var));
+    std::env::remove_var(&var);
+    assert!(
+        resolved.expect("resolves")
+            == Held::new("p\u{e4}ssw\u{f6}rd-\u{1f511}".as_bytes().to_vec())
+    );
+}
+
 /// 1.5.5's `env` source (v1.5.5 crates/busbar/src/config/secret.rs `resolve_builtin`) refused only an
 /// EMPTY value; a whitespace-only value resolved, byte for byte, and still does.
 #[test]

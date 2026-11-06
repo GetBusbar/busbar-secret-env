@@ -129,5 +129,9 @@ mod table {
 pub use table::{door, MACRO_DOOR};
 
 #[cfg(test)]
-#[path = "settings_schema_tests.rs"]
+#[path = "tests/settings_schema_tests.rs"]
 mod settings_schema_tests;
+
+#[cfg(test)]
+#[path = "tests/door_tests.rs"]
+mod door_tests;

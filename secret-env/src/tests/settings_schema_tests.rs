@@ -6,7 +6,7 @@ use busbar_contract::abi::sdk::life::Life;
 #[test]
 fn settings_schema_matches_lifecycle_shapes() {
     let schema: serde_json::Value =
-        serde_json::from_slice(include_bytes!("settings.schema.json")).expect("schema JSON");
+        serde_json::from_slice(include_bytes!("../settings.schema.json")).expect("schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("valid settings schema");
     let cases: &[(&str, bool)] = &[
         (r#"{}"#, true),

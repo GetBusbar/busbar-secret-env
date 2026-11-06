@@ -43,8 +43,12 @@ crate as a row carries no door symbol.
 ## Tests
 
 ```bash
-cargo test --workspace --locked
+cargo build --release --locked -p busbar-secret-env-plugin --lib --features dropped-in
+BUSBAR_PLUGIN_CDYLIB="$PWD/target/release/libbusbar_secret_env_plugin.so" cargo test --release --workspace --locked
 ```
+
+The conformance tests load the freshly built dropped-in cdylib named by the absolute path in
+`BUSBAR_PLUGIN_CDYLIB` (`.dylib` on macOS); without it they fail.
 
 ## License
 

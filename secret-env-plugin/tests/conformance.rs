@@ -533,6 +533,16 @@ fn reference_check_is_pure_and_refuses_bad_settings_through_both_doors() {
             ("{}", Outcome::Failed, "requires settings.key"),
             (r#"{"key":"  "}"#, Outcome::Failed, "requires settings.key"),
             (r#"{"key":7}"#, Outcome::Failed, "requires settings.key"),
+            (
+                r#"{"key":"A=B"}"#,
+                Outcome::Failed,
+                "'A=...' is not a valid environment variable name",
+            ),
+            (
+                r#"{"key":"A\u0000B"}"#,
+                Outcome::Failed,
+                "'A\\0...' is not a valid environment variable name",
+            ),
             ("[1]", Outcome::Failed, "not a JSON object"),
             (
                 r#"{"key":"X","path":"/x"}"#,
