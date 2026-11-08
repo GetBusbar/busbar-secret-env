@@ -10,17 +10,17 @@
 use busbar_contract::abi::sdk::cred::Held;
 use busbar_contract::secret::{SecretModuleError, SecretResult};
 
-pub mod door;
+mod door;
 
 /// The word config names this source by: its module alias and its reference sugar (`{ env: X }`).
-pub const WORD: &str = "env";
+pub(crate) const WORD: &str = "env";
 
 /// The settings key the sugar's value lands under (`{ env: X }` → `settings.key`).
-pub const KEY: &str = "key";
+pub(crate) const KEY: &str = "key";
 
 /// Where a reference names its value, as a refusal of instance settings says it (the SDK's
 /// `takes_no_settings`, at `validate`, `open` and `refresh` alike).
-pub const NAMES: &str = "variable in its own settings.key";
+pub(crate) const NAMES: &str = "variable in its own settings.key";
 
 /// The plugin's name (the manifest name).
 pub const NAME: &str = "busbar-secret-env";
@@ -36,7 +36,7 @@ pub const DECLARES: &str = include_str!("../declares.json");
 /// INVALID for a missing, blank, `=`/NUL-containing or extra setting, a non-UTF-8 value or an
 /// empty value; NOT_FOUND for an unset variable. No refusal carries the value: a name is shown
 /// escaped, and a `key` is shown only up to its first `=` or NUL.
-pub fn resolve(
+pub(crate) fn resolve(
     settings: &serde_json::Map<String, serde_json::Value>,
 ) -> SecretResult<Held<Vec<u8>>> {
     let var = reference_key(settings)?;
@@ -113,3 +113,6 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/wiping_tests.rs"]
 mod wiping_tests;
+
+/// The plugin ABI entry and generated registration constant.
+pub use door::{door, MACRO_DOOR};

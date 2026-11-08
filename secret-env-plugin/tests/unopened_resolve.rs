@@ -15,7 +15,7 @@ const VALUE: &str = "unopened-must-not-leak";
 /// Call the linked door's `resolve` with `instance`, the reference `{"key": SET}` and a buffer of
 /// `VALUE.len()` bytes; answer the outcome, the out struct and the buffer afterwards.
 fn resolve_raw(instance: *mut std::ffi::c_void) -> (Outcome, ResolveOut, Vec<u8>) {
-    let ops = busbar_secret_env::door::door().ops().cast::<Ops>();
+    let ops = busbar_secret_env::door().ops().cast::<Ops>();
     // SAFETY: the secret kind's door answers a table that leads with `OpsHead` and is a whole
     // `secret::Ops` (its kind), alive for the program.
     let resolve = unsafe { (*ops).resolve }.expect("the env door wires resolve");

@@ -6,12 +6,12 @@
 
 #![deny(unsafe_code)]
 
-pub use busbar_secret_env::*;
+pub use busbar_secret_env::{door, DECLARES, MACRO_DOOR, NAME};
 
 /// The exported door, behind `dropped-in` (the cdylib build only): the macro's `#[no_mangle]` symbol is
 /// the one `unsafe` exemption.
 #[cfg(feature = "dropped-in")]
 #[allow(unsafe_code)]
 mod exported {
-    busbar_contract::export_door!(busbar_secret_env::door::door);
+    busbar_contract::export_door!(busbar_secret_env::door);
 }

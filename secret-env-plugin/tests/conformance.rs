@@ -69,11 +69,14 @@ fn stating(words: &[(usize, u32)]) -> Vec<u8> {
 }
 
 fn dispatcher() -> Arc<Dispatcher> {
-    Arc::new(Dispatcher::new(DispatchConfig {
-        workers: 2,
-        watchdog_period: Duration::from_millis(20),
-        ..DispatchConfig::default()
-    }))
+    Arc::new(Dispatcher::new(
+        DispatchConfig {
+            workers: 2,
+            watchdog_period: Duration::from_millis(20),
+            ..DispatchConfig::default()
+        },
+        busbar_contract::services::test_caller_binding(),
+    ))
 }
 
 // Capture the public envelope boundary, including plugin log records, independently of kit
@@ -118,7 +121,7 @@ fn bind(d: &Dispatcher) -> Bind {
 }
 
 fn linked(d: &Dispatcher) -> Plugin<Secret> {
-    let row = LinkedRow::of(busbar_secret_env::door::door).expect("the linked row states");
+    let row = LinkedRow::of(busbar_secret_env::door).expect("the linked row states");
     load_linked::<Secret>(&row, bind(d)).expect("the linked door loads")
 }
 
@@ -149,9 +152,8 @@ fn spelled(c: &Called) -> String {
 }
 
 fn crossings(p: &Plugin<Secret>) -> (u64, u64) {
-    use std::sync::atomic::Ordering::SeqCst;
-    let total = p.inner.crossings.load(SeqCst);
-    let resumes = p.inner.resumes.load(SeqCst);
+    let total = p.test_invocations().0;
+    let resumes = p.test_invocations().1;
     (total - resumes, resumes)
 }
 
@@ -393,7 +395,7 @@ fn the_linked_and_the_dropped_in_env_plugin_are_one_plugin() {
     prepare_environment();
     assert_eq!(std::env::var(SET).as_deref(), Ok(VALUE));
     assert_eq!(
-        LinkedRow::of(busbar_secret_env::door::door)
+        LinkedRow::of(busbar_secret_env::door)
             .expect("the linked row states")
             .statement,
         stated(),
@@ -622,7 +624,7 @@ fn repeated_resolution_and_refresh_keep_material_until_close() {
 #[test]
 fn mismatched_statements_are_refused_through_both_doors() {
     let d = dispatcher();
-    let mut row = LinkedRow::of(busbar_secret_env::door::door).expect("the actual row states");
+    let mut row = LinkedRow::of(busbar_secret_env::door).expect("the actual row states");
     row.statement = different_valid_statement(&row.statement);
     assert_eq!(
         load_linked::<Secret>(&row, bind(&d)).map(|_| ()).err(),
@@ -654,7 +656,7 @@ fn both_statements_agree_with_the_empty_declared_needs() {
     )
     .expect("the actual declares document reads");
     assert_eq!(declared, Default::default());
-    let row = LinkedRow::of(busbar_secret_env::door::door).expect("the actual row states");
+    let row = LinkedRow::of(busbar_secret_env::door).expect("the actual row states");
     for statement in [row.statement, stated()] {
         let read = busbar_contract::abi::mechanism::rendering::read(&statement)
             .unwrap_or_else(|e| panic!("invalid Statement at {}: {}", e.at, e.what));
@@ -787,7 +789,7 @@ fn the_actual_dropped_image_is_distinct_from_the_linked_image() {
         busbar_plugin_loader::dispatch::load::door_addresses_of_library(&path)
             .expect("the actual dropped image loads")
             .expect("the image exports its actual door");
-    let linked = busbar_secret_env::door::door();
+    let linked = busbar_secret_env::door();
     assert_ne!(
         dropped_door,
         std::ptr::from_ref(linked) as usize,
@@ -823,7 +825,7 @@ extern "C" fn metadata_door<const CASE: usize>(
     use busbar_contract::abi::mechanism::door::{Door, Statement};
     static DOORS: [std::sync::OnceLock<usize>; 5] = [const { std::sync::OnceLock::new() }; 5];
     *DOORS[CASE].get_or_init(|| {
-        let mut parts = busbar_secret_env::door::door().parts();
+        let mut parts = busbar_secret_env::door().parts();
         let kind = busbar_contract::abi::mechanism::KindCode::Secret;
         match CASE {
             0 => parts.kind_abi = kind.abi_version() + 1,
@@ -866,9 +868,12 @@ fn the_actual_kind_abi_is_checked_by_pack_linked_and_dropped_origins() {
     use busbar_plugin_loader::dispatch::LoadError;
     let kind = busbar_contract::abi::mechanism::KindCode::Secret;
     let host = kind.abi_version();
-    assert_eq!(busbar_secret_env::door::door().parts().kind_abi, host);
-    let d = Dispatcher::new(Default::default());
-    let honest = LinkedRow::of(busbar_secret_env::door::door).expect("actual Statement");
+    assert_eq!(busbar_secret_env::door().parts().kind_abi, host);
+    let d = Dispatcher::new(
+        Default::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
+    let honest = LinkedRow::of(busbar_secret_env::door).expect("actual Statement");
     let _ = load_linked::<Secret>(&honest, bind(&d)).expect("honest linked twin");
     let _ = load_dropped::<Secret>(&metadata_image(), &honest.statement, bind(&d))
         .expect("honest dropped twin");
@@ -907,9 +912,12 @@ fn the_actual_kind_layout_is_checked_under_honest_and_own_rows() {
     use busbar_plugin_loader::dispatch::LoadError;
     let kind = busbar_contract::abi::mechanism::KindCode::Secret;
     let host = kind.layout_fingerprint();
-    assert_eq!(busbar_secret_env::door::door().parts().layout, host);
-    let d = Dispatcher::new(Default::default());
-    let honest = LinkedRow::of(busbar_secret_env::door::door).unwrap();
+    assert_eq!(busbar_secret_env::door().parts().layout, host);
+    let d = Dispatcher::new(
+        Default::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
+    let honest = LinkedRow::of(busbar_secret_env::door).unwrap();
     let _ = load_linked::<Secret>(&honest, bind(&d)).unwrap();
     let _ = load_dropped::<Secret>(&metadata_image(), &honest.statement, bind(&d)).unwrap();
     for (door, stated) in [
@@ -951,8 +959,11 @@ fn the_actual_kind_layout_is_checked_under_honest_and_own_rows() {
 #[test]
 fn the_actual_statement_matches_each_row_manifest_and_restated_version() {
     use busbar_plugin_loader::dispatch::LoadError;
-    let d = Dispatcher::new(Default::default());
-    let honest = LinkedRow::of(busbar_secret_env::door::door).unwrap();
+    let d = Dispatcher::new(
+        Default::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
+    let honest = LinkedRow::of(busbar_secret_env::door).unwrap();
     let _ = load_linked::<Secret>(&honest, bind(&d)).unwrap();
     let _ = load_dropped::<Secret>(&metadata_image(), &honest.statement, bind(&d)).unwrap();
     let changed = different_valid_statement(&honest.statement);
@@ -982,8 +993,11 @@ fn the_actual_statement_matches_each_row_manifest_and_restated_version() {
 
 fn other_kind_is_refused<K: busbar_plugin_loader::dispatch::Kind>() {
     use busbar_plugin_loader::dispatch::LoadError;
-    let d = Dispatcher::new(Default::default());
-    let row = LinkedRow::of(busbar_secret_env::door::door).unwrap();
+    let d = Dispatcher::new(
+        Default::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
+    let row = LinkedRow::of(busbar_secret_env::door).unwrap();
     let want = LoadError::ManifestKind {
         stated: busbar_contract::abi::mechanism::KindCode::Secret,
         want: K::CODE,
@@ -1006,6 +1020,6 @@ fn the_actual_image_is_refused_as_every_other_kind_through_both_origins() {
     other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::export::Export>();
     other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::hook::Hook>();
     other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::plane::Plane>();
-    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::store::Store>();
+    other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::store_v4::StoreV4>();
     other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::transport::Transport>();
 }
