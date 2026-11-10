@@ -1023,3 +1023,58 @@ fn the_actual_image_is_refused_as_every_other_kind_through_both_origins() {
     other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::store_v4::StoreV4>();
     other_kind_is_refused::<busbar_plugin_loader::dispatch::kinds::transport::Transport>();
 }
+
+/// The lifecycle transcript formerly exercised by the core loader against this product.
+#[test]
+fn environment_material_survives_refresh_and_retires_through_both_doors() {
+    use busbar_contract::abi::mechanism::lifecycle::GenIn;
+    prepare_environment();
+    let d = dispatcher();
+    let script = |p: &Plugin<Secret>| {
+        let before = crossings(p);
+        let hit = format!(r#"{{"key":"{SET}"}}"#);
+        let miss = format!(r#"{{"key":"{UNSET}"}}"#);
+        let mut transcript = vec![
+            validate(p, "{}"),
+            open(p),
+            resolve(p, &hit),
+            release(p, 1),
+            resolve(p, &miss),
+            refresh(p),
+            resolve(p, &hit),
+            release(p, 1),
+        ];
+        let mut retire = Frame::new(
+            GenIn {
+                head: in_head(),
+                generation: 1,
+            },
+            out_head(),
+        );
+        transcript.push(spelled(&counted_call(p, lc::RETIRE, &mut retire)));
+        transcript.push(close(p));
+        transcript.push(resolve(p, &hit));
+        expect_crossings(p, before, 10);
+        transcript
+    };
+    let a = script(&linked(&d));
+    assert_eq!(a, script(&dropped(&d)));
+    assert_eq!(a[0], "Ready lease=false ");
+    assert_eq!(a[1], "Ready lease=false ");
+    assert_eq!(
+        a[2],
+        format!("Ready lease=false  kind=0 material={VALUE:?}")
+    );
+    assert!(a[3].starts_with("Refused"));
+    assert!(a[4].contains(&format!(
+        "kind={} material=\"\"",
+        secret::ERROR_KIND_NOT_FOUND
+    )));
+    assert!(a[4].starts_with("Failed"));
+    assert_eq!(a[5], "Ready lease=false ");
+    assert_eq!(a[6], a[2]);
+    assert!(a[7].starts_with("Refused"));
+    assert_eq!(a[8], "Ready lease=false ");
+    assert_eq!(a[9], "Ready lease=false ");
+    assert!(a[10].starts_with("Fault"));
+}
