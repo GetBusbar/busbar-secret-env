@@ -172,13 +172,21 @@ fn instance_lifecycle_rejects_non_objects_without_installing_state() {
     use crate::door::Env;
     use busbar_contract::abi::mechanism::call::Outcome;
 
-    for bytes in [&b"[1]"[..], b"null", b"7", b"{"] {
+    for (bytes, expected) in [
+        (&b"[1]"[..], "settings: must be a JSON object"),
+        (b"null", "settings: must be a JSON object"),
+        (b"7", "settings: must be a JSON object"),
+        (
+            b"{",
+            "settings: EOF while parsing an object at line 1 column 1",
+        ),
+    ] {
         let validated = Env::validate(bytes).expect_err("validate refuses");
         let opened = Env::open(bytes, &[], 1).expect_err("open refuses");
         let refreshed = Env.refresh(bytes, &[], 2).expect_err("refresh refuses");
         for refusal in [validated, opened, refreshed] {
             assert_eq!(refusal.outcome(), Outcome::Failed);
-            assert_eq!(refusal.text(), Some("settings: must be a JSON object"));
+            assert_eq!(refusal.text(), Some(expected));
         }
     }
 }
@@ -216,7 +224,7 @@ fn instance_settings_are_none_and_a_setting_is_refused_naming_it() {
                 .to_string()
         )
     );
-    for bad in [&b"[1]"[..], b"null", b"\"x\"", b"{"] {
+    for bad in [&b"[1]"[..], b"null", b"\"x\""] {
         assert_eq!(
             instance_settings(bad),
             Err("settings: must be a JSON object".to_string()),
@@ -224,6 +232,10 @@ fn instance_settings_are_none_and_a_setting_is_refused_naming_it() {
             String::from_utf8_lossy(bad)
         );
     }
+    assert_eq!(
+        instance_settings(b"{"),
+        Err("settings: EOF while parsing an object at line 1 column 1".to_string())
+    );
 }
 
 #[test]
